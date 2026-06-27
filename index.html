@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Your Luxe Cosmetic</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Playfair+Display:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header class="site-header">
+        <div class="container site-header__inner">
+            <!-- <div class="account" aria-label="Account selector">
+                <div class="account-select">
+                    <span class="account-select__avatar" aria-hidden="true"></span>
+                    <select class="account-select__control" name="account" aria-label="Account">
+                        <option selected>Vendium</option>
+                        <option>House of Zuri</option>
+                        <option>Guest</option>
+                    </select>
+                </div>
+            </div> -->
+
+            <div class="site-header__content">
+                <p class="site-header__eyebrow">+ FULL CUSTOMISATION + AI TRY-ON</p>
+                <h1 class="site-header__title">Create Your Luxe Cosmetic</h1>
+                <p class="site-header__desc">Customise formula, packaging, pricing, and apply shade accurately using AI face landmarks.</p>
+            </div>
+        </div>
+    </header>
+
+  <main class="page">
+    <div class="container">
+      <div class="layout">
+
+        <!-- ══════════════════ BUILDER FORM ══════════════════ -->
+        <section class="builder" aria-label="Customization builder">
+          <form class="builder-form" action="#" method="post">
+
+            <!-- Step 1: Choose product -->
+            <section class="card form-card" aria-label="Choose product">
+              <h2 class="form-card__title"><span class="form-card__index">1.</span> Choose your product</h2>
+              <div class="product-tabs" aria-label="Choose product">
+                <div class="choice">
+                  <input class="choice-input" type="radio" name="product" id="product-lipstick" checked>
+                  <label class="tab-pill" for="product-lipstick">
+                    <span class="tab-pill__icon tab-pill__icon--lipstick" aria-hidden="true"></span>
+                    <span>Lipstick</span>
+                  </label>
+                </div>
+                <div class="choice">
+                  <input class="choice-input" type="radio" name="product" id="product-gloss">
+                  <label class="tab-pill" for="product-gloss">
+                    <span class="tab-pill__icon tab-pill__icon--gloss" aria-hidden="true"></span>
+                    <span>Lip Gloss</span>
+                  </label>
+                </div>
+                <div class="choice">
+                  <input class="choice-input" type="radio" name="product" id="product-lip-oil">
+                  <label class="tab-pill" for="product-lip-oil">
+                    <span class="tab-pill__icon tab-pill__icon--gloss" aria-hidden="true"></span>
+                    <span>Lip Oil</span>
+                  </label>
+                </div>
+                <div class="choice">
+                  <input class="choice-input" type="radio" name="product" id="product-skin-tint">
+                  <label class="tab-pill" for="product-skin-tint">
+                    <span class="tab-pill__icon tab-pill__icon--foundation" aria-hidden="true"></span>
+                    <span>Skin Tint</span>
+                  </label>
+                </div>
+                <div class="choice">
+                  <input class="choice-input" type="radio" name="product" id="product-blush">
+                  <label class="tab-pill" for="product-blush">
+                    <span class="tab-pill__icon tab-pill__icon--blush" aria-hidden="true"></span>
+                    <span>Liquid Blush</span>
+                  </label>
+                </div>
+                <div class="choice">
+                  <input class="choice-input" type="radio" name="product" id="product-eyeshadow">
+                  <label class="tab-pill" for="product-eyeshadow">
+                    <span class="tab-pill__icon tab-pill__icon--highlighter" aria-hidden="true"></span>
+                    <span>Eyeshadow</span>
+                  </label>
+                </div>
+              </div>
+            </section>
+
+            <!-- Step 2: Choose shade -->
+            <section class="card form-card" id="shade-section" aria-label="Choose shade">
+              <h2 class="form-card__title"><span class="form-card__index">2.</span> Choose shade</h2>
+              <p class="form-card__help">Pick a custom colour or choose a preset — the live preview updates instantly.</p>
+              <div class="shade-line">
+                <div class="shade-chip" aria-label="Selected color">
+                  <input class="shade-chip__color" type="color" id="shade-color" name="shadeColor" value="#D2198B" aria-label="Shade color">
+                  <output class="shade-chip__code" id="shade-code" for="shade-color">#D2198B</output>
+                </div>
+                <select class="control" id="shade-preset" aria-label="Choose shade preset">
+                  <option value="">Select preset shade</option>
+                </select>
+              </div>
+            </section>
+
+            <!-- Step 3: Product options (dynamic) -->
+            <section class="card form-card" aria-label="Product options">
+              <h2 class="form-card__title"><span class="form-card__index">3.</span> Product options</h2>
+              <div id="dynamic-fields"></div>
+            </section>
+
+            <!-- Step 4: Ingredients (dynamic) -->
+            <section class="card form-card" aria-label="Ingredients and benefits">
+              <h2 class="form-card__title"><span class="form-card__index">4.</span> Ingredients &amp; benefits</h2>
+              <div class="tag-grid" id="dynamic-ingredients" aria-label="Ingredients options"></div>
+            </section>
+
+            <!-- Step 5: Fragrance (dynamic) -->
+            <section class="card form-card" aria-label="Fragrance">
+              <h2 class="form-card__title"><span class="form-card__index">5.</span> Fragrance</h2>
+              <div class="product-tabs product-tabs--tight" id="dynamic-fragrances" aria-label="Choose fragrance"></div>
+            </section>
+
+            <!-- Step 6: Packaging -->
+            <section class="card form-card" aria-label="Packaging and personalization">
+              <h2 class="form-card__title"><span class="form-card__index">6.</span> Packaging &amp; personalisation</h2>
+              <div class="grid-2">
+                <div class="field">
+                  <select class="control" id="packaging" aria-label="Packaging">
+                    <option value="">— Packaging —</option>
+                    <option>Classic</option>
+                    <option>Minimal</option>
+                    <option>Gift box</option>
+                    <option>Luxury velvet</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <select class="control" id="personalisation" aria-label="Personalisation">
+                    <option value="">— Personalise —</option>
+                    <option>Monogram</option>
+                    <option>Message</option>
+                    <option>None</option>
+                  </select>
+                </div>
+              </div>
+              <div class="grid-2 grid-2--tight">
+                <div class="field">
+                  <input class="control" type="text" id="engraving" placeholder="Engraving text" aria-label="Engraving">
+                </div>
+                <div class="field">
+                  <input class="control" type="text" id="customer-name" placeholder="Your Name" aria-label="Your name">
+                </div>
+              </div>
+            </section>
+
+            <!-- Step 7: Quantity -->
+            <section class="card form-card" aria-label="Quantity">
+              <h2 class="form-card__title"><span class="form-card__index">7.</span> Quantity</h2>
+              <div class="qty-row">
+                <div class="qty" aria-label="Quantity selector">
+                  <button class="qty__btn" type="button" id="qty-minus" aria-label="Decrease quantity">−</button>
+                  <input class="qty__value" type="text" id="qty-value" inputmode="numeric" value="1" aria-label="Quantity" readonly>
+                  <button class="qty__btn" type="button" id="qty-plus" aria-label="Increase quantity">+</button>
+                </div>
+                <p class="qty__hint">Use same config for bulk orders</p>
+              </div>
+            </section>
+
+          </form>
+        </section>
+
+        <!-- ══════════════════ SIDEBAR ══════════════════ -->
+        <aside class="sidebar" aria-label="Preview and try-on">
+
+          <!-- Live Preview Card -->
+          <section class="card preview-card" aria-label="Live preview">
+            <header class="preview-card__head">
+              <h2 class="preview-card__title">Live Preview</h2>
+            </header>
+            <div class="preview-card__body">
+              <div id="preview-canvas" class="preview-card__img" role="img" aria-label="Product preview" style="width:128px;height:128px;overflow:hidden"></div>
+              <div class="preview-card__info">
+                <h3 class="preview-card__name" id="preview-name">Custom Matte<br>Lipstick</h3>
+                <ul class="preview-card__list">
+                  <li>
+                    <span class="dot dot--brand" id="preview-shade-dot" aria-hidden="true"></span>
+                    <span id="preview-shade-text">Glamor Pink: </span>
+                  </li>
+                  <li>
+                    <span class="dot dot--muted" aria-hidden="true"></span>
+                    <span id="preview-ingredients">Vitamin E, Jojoba oil, Shea Butter</span>
+                  </li>
+                  <li>
+                    <span class="dot dot--muted" aria-hidden="true"></span>
+                    <span id="preview-finish">—</span>
+                  </li>
+                </ul>
+                <div class="price-breakdown" aria-label="Price breakdown">
+                  <div class="price-breakdown__row">
+                    <span>Base price</span>
+                    <span id="price-base">₹1,180</span>
+                  </div>
+                  <div class="price-breakdown__row">
+                    <span>Add-ons</span>
+                    <span id="price-addons">₹500</span>
+                  </div>
+                  <div class="price-breakdown__row price-breakdown__row--total">
+                    <span>Total</span>
+                    <span id="price-total">₹1,680</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="preview-card__actions">
+              <button class="btn btn--primary btn--wide" id="btn-add-to-cart" type="button">ADD TO CART</button>
+              <button class="btn btn--outline btn--wide" id="btn-copy" type="button">
+                <span class="btn__icon btn__icon--copy" aria-hidden="true"></span>
+                COPY DETAILS
+              </button>
+            </div>
+          </section>
+
+          <!-- AI Try-On Card -->
+          <section class="card tryon-card" aria-label="AI try-on">
+            <header class="tryon-card__head">
+              <h2 class="tryon-card__title">Ai Try-On</h2>
+              <div class="tryon-tabs" role="tablist" aria-label="Try-on mode">
+                <button class="tryon-tab is-active" id="tab-photo" type="button" role="tab" aria-selected="true">📷 Photo</button>
+                <button class="tryon-tab" id="tab-camera" type="button" role="tab" aria-selected="false">🎥 Camera</button>
+              </div>
+            </header>
+
+            <div class="tryon-status" id="tryon-status" role="status" aria-live="polite" style="display:none"></div>
+
+            <!-- Photo Panel -->
+            <div id="panel-photo" role="tabpanel">
+              <p class="tryon-card__desc">Upload a selfie — AI detects your face and applies the chosen shade instantly.</p>
+              <div class="dropzone" id="dropzone" role="group" aria-label="Upload photo area">
+                <input type="file" id="file-input" accept="image/*" style="display:none" aria-label="Upload photo file">
+                <p class="dropzone__hint">Drag &amp; drop or browse</p>
+                <button class="dropzone__btn" type="button" id="btn-choose-photo">Choose photo</button>
+              </div>
+              <div class="tryon-result" id="tryon-result" style="display:none">
+                <canvas id="tryon-canvas" class="tryon-canvas" aria-label="Try-on result"></canvas>
+              </div>
+            </div>
+
+            <!-- Camera Panel -->
+            <div id="panel-camera" role="tabpanel" style="display:none">
+              <p class="tryon-card__desc">Enable camera for real-time preview using AI face tracking.</p>
+              <div class="tryon-result" id="camera-result">
+                <video id="camera-video" playsinline autoplay muted style="display:none"></video>
+                <canvas id="camera-canvas" class="tryon-canvas webgl-canvas" aria-label="Live camera try-on"></canvas>
+                <div class="camera-placeholder" id="camera-placeholder">
+                  <span class="camera-placeholder__icon">🎥</span>
+                  <span>Camera preview will appear here</span>
+                </div>
+              </div>
+              <button class="btn btn--soft btn--wide" id="btn-start-camera" type="button" style="margin-top:10px">▶ Start Camera</button>
+              <button class="btn btn--danger btn--wide" id="btn-stop-camera" type="button" style="display:none;margin-top:8px">✕ Stop Camera</button>
+            </div>
+
+            <!-- Sliders -->
+            <div class="sliders" aria-label="Try-on settings" style="margin-top:14px">
+              <div class="slider-row">
+                <span class="slider-row__label">Opacity</span>
+                <span class="slider-row__value" id="val-opacity">70%</span>
+              </div>
+              <input class="range" type="range" id="slider-opacity" min="0" max="100" value="70" aria-label="Opacity">
+              <div class="slider-row">
+                <span class="slider-row__label">Blur</span>
+                <span class="slider-row__value" id="val-blur">2%</span>
+              </div>
+              <input class="range" type="range" id="slider-blur" min="0" max="100" value="2" aria-label="Blur">
+              <div class="slider-row">
+                <span class="slider-row__label">Shine</span>
+                <span class="slider-row__value" id="val-shine">30%</span>
+              </div>
+              <input class="range" type="range" id="slider-shine" min="0" max="100" value="30" aria-label="Shine">
+            </div>
+
+            <!-- Actions -->
+            <button class="btn btn--soft btn--wide" type="button" id="btn-apply-shade" style="margin-top:10px">
+              <span class="btn__icon btn__icon--play" aria-hidden="true"></span>
+              Apply current shade
+            </button>
+            <div class="tryon-card__split" aria-label="Try-on actions">
+              <button class="btn btn--success" type="button" id="btn-detect-face">
+                <span class="btn__icon btn__icon--spark" aria-hidden="true"></span>
+                Detect Face
+              </button>
+              <button class="btn btn--danger" type="button" id="btn-clear-tryon">
+                <span class="btn__icon btn__icon--x" aria-hidden="true"></span>
+                Clear
+              </button>
+            </div>
+          </section>
+
+        </aside>
+      </div>
+    </div>
+  </main>
+
+    <footer class="footer">
+        <div class="container footer__inner">
+            <p>&copy; 2025 House of Zuri. Designed for the modern brand.</p>
+        </div>
+    </footer>
+
+    <!-- MediaPipe is loaded lazily by app.js via dynamic import. -->
+    <!-- Modular JS — app.js imports all modules -->
+
+    <script type="module" src="js/app.js"></script>
+    
+</body>
+</html>

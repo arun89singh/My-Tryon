@@ -315,6 +315,22 @@ function tracePath(ctx, pts) {
     ctx.closePath();
 }
 
+// Trace a CLOSED, SMOOTH curve through a ring of points using quadratic
+// segments between consecutive midpoints. Turns a sparse, faceted polygon
+// (e.g. 9 eye landmarks) into a clean continuous outline.
+function traceSmoothClosed(ctx, pts) {
+    const n = pts.length;
+    if (n < 3) { tracePath(ctx, pts); return; }
+    const start = { x: (pts[n - 1].x + pts[0].x) / 2, y: (pts[n - 1].y + pts[0].y) / 2 };
+    ctx.moveTo(start.x, start.y);
+    for (let i = 0; i < n; i++) {
+        const cur = pts[i];
+        const nxt = pts[(i + 1) % n];
+        ctx.quadraticCurveTo(cur.x, cur.y, (cur.x + nxt.x) / 2, (cur.y + nxt.y) / 2);
+    }
+    ctx.closePath();
+}
+
 function expandContour(pts, factor, cornerBoost = 0) {
     let cx = 0, cy = 0;
     for (let i = 0; i < pts.length; i++) { cx += pts[i].x; cy += pts[i].y; }
@@ -748,17 +764,17 @@ function renderCheekMask(ctx, landmarks, w, h, hexColor, blurPx) {
     // Temple-to-temple width FORESHORTENS on a left/right head turn, which used
     // to collapse the blush radius to nothing past the nose. Floor it with the
     // vertical face height (forehead→chin), which stays stable through a yaw
-    // turn, so the blush keeps its size when the face is turned.
+    // turn. Keep the floor low (0.55) so it does NOT inflate the blush on a
+    // normal frontal face — it only kicks in once the face is actually turned.
     const topPt    = getPts(landmarks, w, h, [10])[0];
     const chinPt   = getPts(landmarks, w, h, [152])[0];
     const faceTall = Math.hypot(chinPt.x - topPt.x, chinPt.y - topPt.y);
-    const faceWidth = Math.max(Math.abs(rightEdge.x - leftEdge.x), faceTall * 0.68);
+    const faceWidth = Math.max(Math.abs(rightEdge.x - leftEdge.x), faceTall * 0.55);
 
-    // ── Clip to face oval so blush never bleeds outside (new-vt approach) ──
-    // Expanded outward a little so blush isn't sliced off when the face turns
-    // to a side view (the far-side oval landmarks fold inward on a turn).
+    // ── Clip to the face oval so blush stays ON the face and never spills
+    //    onto the temples, ears, neck, or background. ──
     ctx.save();
-    const oval = expandContour(getPts(landmarks, w, h, FACE_OVAL), 1.12);
+    const oval = getPts(landmarks, w, h, FACE_OVAL);
     ctx.beginPath();
     tracePath(ctx, oval);
     ctx.clip();
@@ -863,7 +879,8 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const faceH = Math.hypot(chin.x - fore.x, chin.y - fore.y);
     // Floor the width with face height so the tint doesn't narrow to a sliver
     // when the head turns left/right (temple-to-temple x foreshortens on yaw).
-    const faceW = Math.max(Math.abs(rEar.x - lEar.x), faceH * 0.68);
+    // Low floor (0.55) so it never over-widens the tint on a frontal face.
+    const faceW = Math.max(Math.abs(rEar.x - lEar.x), faceH * 0.55);
 
     const cx = (lEar.x + rEar.x) / 2;
     const cy = fore.y + faceH * 0.42;  // center placed so the FULL forehead is covered
@@ -887,11 +904,10 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
         }
         return p;
     });
-    // Expand the clip outward so a turned / side-view face isn't sliced by the
-    // oval edge (on a side turn the far-side landmarks fold inward). The
-    // gradient's own falloff still keeps the tint soft at the face edge.
+    // Clip to the face oval (with the lifted forehead) so the tint stays ON
+    // the face and never spills onto the hair, ears, neck, or background.
     ctx.beginPath();
-    tracePath(ctx, expandContour(clipPts, 1.12));
+    tracePath(ctx, clipPts);
     ctx.clip();
 
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
@@ -965,16 +981,17 @@ function renderEyelidMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const c = hexToRgb(hexColor);
     ctx.clearRect(0, 0, w, h);
 
-    // Airbrushed soft edge — blur scales with eye size so the shadow blends
-    // into the lid as a diffuse wash instead of sitting as a hard-edged patch.
+    // Soft, blended edge — blur scales with eye size. A touch less blur than
+    // before so the improved shape stays defined.
     const ref = getPts(landmarks, w, h, RIGHT_EYE_UPPER);
     const ew  = Math.abs(ref[ref.length - 1].x - ref[0].x) || 40;
-    ctx.filter = `blur(${(blurPx + Math.max(ew * 0.06, 3)).toFixed(1)}px)`;
+    ctx.filter = `blur(${(blurPx + Math.max(ew * 0.05, 3)).toFixed(1)}px)`;
 
-    // Smoky lash-line shape, lifted toward each OUTER corner for a natural,
-    // flattering taper (thinner at the inner corner near the nose).
-    drawEyelidShadow(ctx, landmarks, w, h, RIGHT_EYE_UPPER, c, true);  // outer corner at start (33)
-    drawEyelidShadow(ctx, landmarks, w, h, LEFT_EYE_UPPER,  c, false); // outer corner at end (263)
+    // Pro shape: lid wash (lash→crease) that rises toward the outer corner,
+    // plus an outer-V deepening for dimension. Brow indices let the height
+    // adapt to each eye's real lid size.
+    drawEyelidShadow(ctx, landmarks, w, h, RIGHT_EYE_UPPER, RIGHT_EYEBROW, c, true);  // outer at start (33)
+    drawEyelidShadow(ctx, landmarks, w, h, LEFT_EYE_UPPER,  LEFT_EYEBROW,  c, false); // outer at end (263)
 
     ctx.filter = 'none';
 }
@@ -989,41 +1006,75 @@ function renderEyelidMask(ctx, landmarks, w, h, hexColor, blurPx) {
  * Coordinate note: uses getPts() (no X-flip). Camera flips upstream,
  * photo doesn't, so geometry is correct in both modes.
  */
-function drawEyelidShadow(ctx, lm, w, h, lashIdx, c, outerAtStart) {
+function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     const lash = getPts(lm, w, h, lashIdx);
+    const brow = getPts(lm, w, h, browIdx);
     const n = lash.length;
-    const ew = Math.abs(lash[n - 1].x - lash[0].x);
-    const sh = ew * 0.30;   // low band — hugs the lash line, stays off the brow
+    const ew = Math.abs(lash[n - 1].x - lash[0].x) || 40;
 
-    const top = lash.map((pt, i) => {
-        const t     = i / (n - 1);
-        const arch  = Math.sin(t * Math.PI);              // 0 at corners → 1 mid
-        const outer = outerAtStart ? (1 - t) : t;         // 1 at outer corner → 0 inner
-        // Full coverage across the eye with a mid lift toward the brow…
-        const body  = 0.55 + 0.45 * arch + 0.18 * outer;
-        // …but taper the height to the lash line within the last ~14% at each
-        // corner, so the start (nose-side) and end (outer) edges come to a
-        // clean, defined point instead of a blunt vertical end.
-        const taper = Math.min(t, 1 - t) / 0.14;
-        const hF    = body * Math.min(taper, 1);
-        return { x: pt.x, y: pt.y - sh * hF };
-    });
+    // Nearest brow Y for a given X — lets the band size itself to each eye's lid.
+    const browYAt = (x) => {
+        let best = brow[0], bd = Math.abs(brow[0].x - x);
+        for (let j = 1; j < brow.length; j++) {
+            const d = Math.abs(brow[j].x - x);
+            if (d < bd) { bd = d; best = brow[j]; }
+        }
+        return best.y;
+    };
 
+    // ── STABLE anchors ──
+    // The eye CORNERS and the EYEBROW barely move when you blink, unlike the
+    // mid-lid lash points (which collapse when the eye closes). We rebuild the
+    // ENTIRE shape from just the corners + brow, so the eyeshadow stays the
+    // SAME whether the eye is open or closed.
+    const A0 = lash[0], B0 = lash[n - 1];            // eye corners (stable)
+    const midX = (A0.x + B0.x) / 2;
+    const cornerMidY = (A0.y + B0.y) / 2;
+    const lid = Math.max(cornerMidY - browYAt(midX), ew * 0.40); // corner→brow gap
+
+    // Extend the chord PAST the corners so the band reaches both canthi — and a
+    // bit MORE past the OUTER (lateral) corner so it sweeps toward it.
+    const dx = B0.x - A0.x, dy = B0.y - A0.y;
+    const extOuter = 0.14, extInner = 0.05;
+    const eA = outerAtStart ? extOuter : extInner;   // A is the outer corner when outerAtStart
+    const eB = outerAtStart ? extInner : extOuter;
+    const A = { x: A0.x - dx * eA, y: A0.y - dy * eA };
+    const B = { x: B0.x + dx * eB, y: B0.y + dy * eB };
+
+    const bow = lid * 0.28;   // lower edge sits clearly ABOVE the lashes (off the lash line)
+    const H   = lid * 0.30;   // shorter dome → curve sits a little lower on the lid
+
+    // LOWER edge = a stable arc that sits ABOVE the lashes (never on them);
+    // UPPER edge = an independent capsule dome up to ~the crease. Both come from
+    // the stable corner baseline, so the shape is the same on a blink and spans
+    // medial canthus → lateral canthus via the extended chord.
+    const STEPS = 30;
+    const lower = [], upper = [];
+    for (let k = 0; k <= STEPS; k++) {
+        const u  = k / STEPS;                            // 0 (corner A) → 1 (corner B)
+        const cx = A.x + (B.x - A.x) * u;                // along the corner chord
+        const cy = A.y + (B.y - A.y) * u;
+        const archL = Math.sin(u * Math.PI);             // bow peaks in the middle
+        const profU = Math.pow(1 - Math.pow(Math.abs(2 * u - 1), 3), 0.5); // capsule dome
+        const floorY = cy - bow * archL;                 // stable baseline, above the lashes
+        lower.push({ x: cx, y: floorY });
+        upper.push({ x: cx, y: floorY - H * profU });    // dome from the stable baseline
+    }
+
+    // Closed loop: reconstructed lash arc (A→B), then the dome back (B→A),
+    // curve-smoothed so the outline reads as one soft cosmetic shape.
+    const loop = lower.concat([...upper].reverse());
     ctx.beginPath();
-    ctx.moveTo(lash[0].x, lash[0].y);
-    for (let i = 1; i < n; i++) ctx.lineTo(lash[i].x, lash[i].y);
-    for (let i = top.length - 1; i >= 0; i--) ctx.lineTo(top[i].x, top[i].y);
-    ctx.closePath();
+    traceSmoothClosed(ctx, loop);
 
-    // Densest on the lash line, fading smoothly up to the crease — extra
-    // mid-stops keep it a graduated wash, not a flat block of color.
-    const topY = Math.min(...top.map(p => p.y));
-    const botY = Math.max(...lash.map(p => p.y));
+    // Dark at the lash line (the eye) → lighter toward the crease.
+    const topY = Math.min(...upper.map(p => p.y));
+    const botY = Math.max(...lower.map(p => p.y));
     const g = ctx.createLinearGradient(0, botY, 0, topY);
-    g.addColorStop(0,    `rgba(${c.r},${c.g},${c.b},1.00)`);
-    g.addColorStop(0.40, `rgba(${c.r},${c.g},${c.b},0.78)`);
-    g.addColorStop(0.75, `rgba(${c.r},${c.g},${c.b},0.38)`);
-    g.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0)`);
+    g.addColorStop(0,    `rgba(${c.r},${c.g},${c.b},1.00)`); // darkest — at the lashes
+    g.addColorStop(0.40, `rgba(${c.r},${c.g},${c.b},0.80)`);
+    g.addColorStop(0.75, `rgba(${c.r},${c.g},${c.b},0.42)`);
+    g.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0)`);    // lightest — toward the crease
     ctx.fillStyle = g;
     ctx.fill();
 }
@@ -1034,7 +1085,7 @@ function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
 
     // Pigmentation → coverage. Soft = sheer wash, Intense = bold.
     const PIG_MUL   = { Soft: 0.78, Medium: 1.0, Intense: 1.3 };
-    const fillAlpha = Math.min(opacity * 1.05 * (PIG_MUL[pigment] ?? 1.0), 1.0);
+    const fillAlpha = Math.min(opacity * 1.25 * (PIG_MUL[pigment] ?? 1.0), 1.0);
 
     // Finish → shimmer amount. Matte = none, Glitter = most. Default ≈ subtle.
     const SHIM_MUL = { Matte: 0.0, Shimmer: 1.0, Metallic: 1.25, Glitter: 1.6 };
@@ -2471,6 +2522,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Wire up all interactions
     setupProductTabs();
+    // Populate the preset-shade dropdown for the default product (lipstick) on
+    // load — otherwise the dropdown only has its placeholder until the user
+    // switches products, so the lipstick preset wouldn't show on first load.
+    updateShadePresets();
     setupShadeSync();
     setupStaticFormListeners();
     setupQty();

@@ -344,6 +344,16 @@ function expandContour(pts, factor, cornerBoost = 0) {
     });
 }
 
+// Expand a contour by independent horizontal / vertical factors around its
+// centroid. Lets an eye cutout keep vertical margin without bulging sideways
+// toward the nose.
+function expandXY(pts, fx, fy) {
+    let cx = 0, cy = 0;
+    for (let i = 0; i < pts.length; i++) { cx += pts[i].x; cy += pts[i].y; }
+    cx /= pts.length; cy /= pts.length;
+    return pts.map(p => ({ x: cx + (p.x - cx) * fx, y: cy + (p.y - cy) * fy }));
+}
+
 // Compute centroid of a set of landmark points
 function centroid(lm, w, h, indices) {
     let sx = 0, sy = 0;
@@ -960,8 +970,10 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
     ctx.restore();
 
     // ── Cut the eyes and lips out (destination-out, no filter) ────
-    const leftEye  = expandContour(getPts(landmarks, w, h, LEFT_EYE),  1.9);
-    const rightEye = expandContour(getPts(landmarks, w, h, RIGHT_EYE), 1.9);
+    // Less horizontal expansion (1.35) so the eye cutout doesn't bulge toward
+    // the nose; more vertical (1.8) to keep margin above/below the eye.
+    const leftEye  = expandXY(getPts(landmarks, w, h, LEFT_EYE),  1.35, 1.8);
+    const rightEye = expandXY(getPts(landmarks, w, h, RIGHT_EYE), 1.35, 1.8);
     const lips     = expandContour(getPts(landmarks, w, h, LIP_OUTER), 1.15);
     ctx.save();
     ctx.globalCompositeOperation = 'destination-out';

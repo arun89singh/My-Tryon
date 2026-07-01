@@ -755,6 +755,22 @@ function drawOilHighlight(ctx, cx, cy, rx, ry, intensity) {
 //  Center computed from cheek landmarks, radius from face width.
 // ═══════════════════════════════════════════════════════════════
 
+// Keep only the pixels INSIDE the given oval outline, via destination-in.
+// Used instead of clip() because a canvas blur filter + clip() leaks outside
+// the clip on some mobile browsers (iOS Safari / some Android GPUs) — which is
+// what made blush/skin-tint spill off the face on mobile. destination-in with
+// an unfiltered fill masks reliably everywhere.
+function maskToOval(ctx, ovalPts) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.filter = 'none';
+    ctx.beginPath();
+    tracePath(ctx, ovalPts);
+    ctx.fillStyle = '#000';
+    ctx.fill();
+    ctx.restore();
+}
+
 function renderCheekMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const c = hexToRgb(hexColor);
     ctx.clearRect(0, 0, w, h);
@@ -771,14 +787,6 @@ function renderCheekMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const faceTall = Math.hypot(chinPt.x - topPt.x, chinPt.y - topPt.y);
     const faceWidth = Math.max(Math.abs(rightEdge.x - leftEdge.x), faceTall * 0.55);
 
-    // ── Clip to the face oval so blush stays ON the face and never spills
-    //    onto the temples, ears, neck, or background. ──
-    ctx.save();
-    const oval = getPts(landmarks, w, h, FACE_OVAL);
-    ctx.beginPath();
-    tracePath(ctx, oval);
-    ctx.clip();
-
     // RIGHT cheek landmarks (apple + cheekbone sweep + outward anchor)
     const rUpper = getPts(landmarks, w, h, [111])[0];
     const rLower = getPts(landmarks, w, h, [205])[0];
@@ -791,11 +799,13 @@ function renderCheekMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const bigR   = faceWidth * 0.28;  // main sweep blob
     const smallR = faceWidth * 0.15;  // cheekbone highlight blob
 
-    // Baseline blurs from new-vt (14px main, 10px highlight); slider adds.
+    // Draw the blurred blush blobs UNCLIPPED, then keep only what's inside the
+    // face oval via destination-in (clip() + blur filter leaks off the face on
+    // mobile — this masks reliably everywhere).
     drawBlushSweep(ctx, rUpper, rLower, rOuter, c, bigR, smallR, blurPx);
     drawBlushSweep(ctx, lUpper, lLower, lOuter, c, bigR, smallR, blurPx);
 
-    ctx.restore();
+    maskToOval(ctx, getPts(landmarks, w, h, FACE_OVAL));
 }
 
 /**
@@ -888,12 +898,10 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const ry = faceH * 0.70;           // taller reach → hairline + chin both covered
     const maxR = Math.max(rx, ry);
 
-    // Clip everything (tint + cutouts) to the face oval so the tint never
-    // spills onto the neck, hair, or background — especially on head turns.
-    // The mesh's top landmark (10) sits mid-forehead, so we LIFT the upper
-    // half of the oval up toward the hairline (tapered to 0 at center) — this
-    // covers the whole forehead without widening the cheeks/jaw.
-    ctx.save();
+    // Lifted face-oval outline — used to MASK the tint at the end (not clip(),
+    // which leaks with a blur filter on mobile). The mesh's top landmark (10)
+    // sits mid-forehead, so we lift the upper half up toward the hairline
+    // (tapered to 0 at center) to cover the whole forehead.
     const faceOval   = getPts(landmarks, w, h, FACE_OVAL);
     const ovalTopY   = Math.min(...faceOval.map(p => p.y));
     const foreLift   = faceH * 0.22;   // how far up toward the hairline to extend
@@ -904,12 +912,8 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
         }
         return p;
     });
-    // Clip to the face oval (with the lifted forehead) so the tint stays ON
-    // the face and never spills onto the hair, ears, neck, or background.
-    ctx.beginPath();
-    tracePath(ctx, clipPts);
-    ctx.clip();
 
+    // Draw the tint gradient UNCLIPPED; it's masked to the oval below.
     const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
     grad.addColorStop(0,    `rgba(${c.r},${c.g},${c.b},1.00)`);
     grad.addColorStop(0.60, `rgba(${c.r},${c.g},${c.b},0.92)`);
@@ -944,7 +948,8 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
     ctx.beginPath(); tracePath(ctx, lips);     ctx.fill();
     ctx.restore();
 
-    ctx.restore(); // end face-oval clip
+    // Finally, keep only what's inside the lifted face oval.
+    maskToOval(ctx, clipPts);
 }
 
 function compositeFace(ctx, maskCanvas, landmarks, w, h, opacity, shine) {

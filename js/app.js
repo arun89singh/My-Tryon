@@ -855,7 +855,8 @@ function drawBlushSweep(ctx, upPt, lowPt, outPt, c, bigR, smallR, blurPx) {
     ctx.beginPath();
     ctx.arc(cx, cy, bigR, 0, Math.PI * 2);
     ctx.fillStyle = g1;
-    ctx.filter = `blur(${(blurPx + 14).toFixed(1)}px)`;
+    // No ctx.filter blur: the radial gradient is already soft, and a blur
+    // filter renders as an opaque white bounding box on some mobile GPUs.
     ctx.fill();
     ctx.restore();
 
@@ -872,7 +873,6 @@ function drawBlushSweep(ctx, upPt, lowPt, outPt, c, bigR, smallR, blurPx) {
     ctx.beginPath();
     ctx.arc(hx, hy, smallR, 0, Math.PI * 2);
     ctx.fillStyle = g2;
-    ctx.filter = `blur(${(blurPx + 10).toFixed(1)}px)`;
     ctx.fill();
     ctx.restore();
 }
@@ -961,7 +961,8 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
     sctx.beginPath();
     sctx.arc(cx, cy, maxR, 0, Math.PI * 2);
     sctx.fillStyle = grad;
-    sctx.filter = `blur(${(blurPx + 10).toFixed(1)}px)`;
+    // No ctx.filter blur (renders as a white box on some mobile GPUs); the
+    // radial gradient already gives a soft edge.
     sctx.fill();
     sctx.restore();
 

@@ -755,19 +755,37 @@ function drawOilHighlight(ctx, cx, cy, rx, ry, intensity) {
 //  Center computed from cheek landmarks, radius from face width.
 // ═══════════════════════════════════════════════════════════════
 
-// Keep only the pixels INSIDE the given oval outline, via destination-in.
-// Used instead of clip() because a canvas blur filter + clip() leaks outside
-// the clip on some mobile browsers (iOS Safari / some Android GPUs) — which is
-// what made blush/skin-tint spill off the face on mobile. destination-in with
-// an unfiltered fill masks reliably everywhere.
-function maskToOval(ctx, ovalPts) {
+// ── Mobile-safe blur + oval masking ──────────────────────────────
+// Mobile browsers (iOS Safari / some Android GPUs) mis-handle a canvas blur
+// `filter` when the SAME context also does a masking op (clip() or
+// destination-in) — the blurred pixels leak past the mask and spill off the
+// face. To avoid it we render the blurred effect on a reusable SCRATCH canvas
+// (blur only, plain source-over), then mask it to the face oval on the target
+// canvas with source-in and NO filter. The blur and the mask never share a
+// context, so it's exact on every device.
+let _scratchCanvas = null;
+function getScratch(w, h) {
+    if (!_scratchCanvas) _scratchCanvas = document.createElement('canvas');
+    if (_scratchCanvas.width !== w || _scratchCanvas.height !== h) {
+        _scratchCanvas.width = w;
+        _scratchCanvas.height = h;
+    }
+    return _scratchCanvas;
+}
+
+// Draw `content` (an already-rendered canvas) onto ctx, keeping ONLY the part
+// inside ovalPts. No filter is ever active here, so the mask is exact on mobile.
+function drawClippedToOval(ctx, content, ovalPts, w, h) {
+    ctx.clearRect(0, 0, w, h);
     ctx.save();
-    ctx.globalCompositeOperation = 'destination-in';
     ctx.filter = 'none';
+    ctx.globalCompositeOperation = 'source-over';
     ctx.beginPath();
     tracePath(ctx, ovalPts);
     ctx.fillStyle = '#000';
-    ctx.fill();
+    ctx.fill();                          // the oval mask shape
+    ctx.globalCompositeOperation = 'source-in';
+    ctx.drawImage(content, 0, 0);        // keep content only where the oval is
     ctx.restore();
 }
 
@@ -799,13 +817,18 @@ function renderCheekMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const bigR   = faceWidth * 0.28;  // main sweep blob
     const smallR = faceWidth * 0.15;  // cheekbone highlight blob
 
-    // Draw the blurred blush blobs UNCLIPPED, then keep only what's inside the
-    // face oval via destination-in (clip() + blur filter leaks off the face on
-    // mobile — this masks reliably everywhere).
-    drawBlushSweep(ctx, rUpper, rLower, rOuter, c, bigR, smallR, blurPx);
-    drawBlushSweep(ctx, lUpper, lLower, lOuter, c, bigR, smallR, blurPx);
+    // Render the blurred blush on the SCRATCH canvas (blur only, no compositing),
+    // then mask it to the face oval on the target canvas — this keeps blur and
+    // masking on separate contexts so blush can't leak off the face on mobile.
+    const s = getScratch(w, h);
+    const sctx = s.getContext('2d');
+    sctx.clearRect(0, 0, w, h);
+    sctx.filter = 'none';
+    sctx.globalCompositeOperation = 'source-over';
+    drawBlushSweep(sctx, rUpper, rLower, rOuter, c, bigR, smallR, blurPx);
+    drawBlushSweep(sctx, lUpper, lLower, lOuter, c, bigR, smallR, blurPx);
 
-    maskToOval(ctx, getPts(landmarks, w, h, FACE_OVAL));
+    drawClippedToOval(ctx, s, getPts(landmarks, w, h, FACE_OVAL), w, h);
 }
 
 /**
@@ -913,43 +936,49 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
         return p;
     });
 
-    // Draw the tint gradient UNCLIPPED; it's masked to the oval below.
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
+    // Render the tint + eye/lip cutouts on the SCRATCH canvas. The blurred
+    // gradient uses only source-over (safe with a filter on mobile); the cutouts
+    // use destination-out WITHOUT a filter (a blur filter + destination-out is
+    // the exact combo that leaks on mobile). The whole thing is then masked to
+    // the face oval on the target canvas with no filter — so it stays ON the
+    // face on every device.
+    const s = getScratch(w, h);
+    const sctx = s.getContext('2d');
+    sctx.clearRect(0, 0, w, h);
+    sctx.filter = 'none';
+    sctx.globalCompositeOperation = 'source-over';
+
+    const grad = sctx.createRadialGradient(cx, cy, 0, cx, cy, maxR);
     grad.addColorStop(0,    `rgba(${c.r},${c.g},${c.b},1.00)`);
     grad.addColorStop(0.60, `rgba(${c.r},${c.g},${c.b},0.92)`);
     grad.addColorStop(0.88, `rgba(${c.r},${c.g},${c.b},0.60)`);
     grad.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0)`);
 
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.scale(rx / maxR, ry / maxR);
-    ctx.translate(-cx, -cy);
-    ctx.beginPath();
-    ctx.arc(cx, cy, maxR, 0, Math.PI * 2);
-    ctx.fillStyle = grad;
-    ctx.filter = `blur(${(blurPx + 10).toFixed(1)}px)`;
-    ctx.fill();
-    ctx.restore();
+    sctx.save();
+    sctx.translate(cx, cy);
+    sctx.scale(rx / maxR, ry / maxR);
+    sctx.translate(-cx, -cy);
+    sctx.beginPath();
+    sctx.arc(cx, cy, maxR, 0, Math.PI * 2);
+    sctx.fillStyle = grad;
+    sctx.filter = `blur(${(blurPx + 10).toFixed(1)}px)`;
+    sctx.fill();
+    sctx.restore();
 
-    // ── Cut the eyes and lips out ─────────────────────────────────
-    // Skin tint covers skin (cheeks, forehead, nose, jaw) but should NOT
-    // sit on the eyes or lips. Erase each region (enlarged + soft blurred
-    // edge) so eyes and lips stay natural and keep their own color.
-    const eyeBlur  = Math.max(faceW * 0.012, 4);
+    // ── Cut the eyes and lips out (destination-out, no filter) ────
     const leftEye  = expandContour(getPts(landmarks, w, h, LEFT_EYE),  1.9);
     const rightEye = expandContour(getPts(landmarks, w, h, RIGHT_EYE), 1.9);
     const lips     = expandContour(getPts(landmarks, w, h, LIP_OUTER), 1.15);
-    ctx.save();
-    ctx.globalCompositeOperation = 'destination-out';
-    ctx.filter = `blur(${eyeBlur.toFixed(1)}px)`;
-    ctx.fillStyle = '#000';
-    ctx.beginPath(); tracePath(ctx, leftEye);  ctx.fill();
-    ctx.beginPath(); tracePath(ctx, rightEye); ctx.fill();
-    ctx.beginPath(); tracePath(ctx, lips);     ctx.fill();
-    ctx.restore();
+    sctx.save();
+    sctx.globalCompositeOperation = 'destination-out';
+    sctx.fillStyle = '#000';
+    sctx.beginPath(); tracePath(sctx, leftEye);  sctx.fill();
+    sctx.beginPath(); tracePath(sctx, rightEye); sctx.fill();
+    sctx.beginPath(); tracePath(sctx, lips);     sctx.fill();
+    sctx.restore();
 
-    // Finally, keep only what's inside the lifted face oval.
-    maskToOval(ctx, clipPts);
+    // Mask to the lifted face oval on the target canvas.
+    drawClippedToOval(ctx, s, clipPts, w, h);
 }
 
 function compositeFace(ctx, maskCanvas, landmarks, w, h, opacity, shine) {

@@ -2541,7 +2541,7 @@ const PRODUCT_ID_MAP = {
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[HoZ] v5.40 loaded — reverted to canvas-blend lipstick (pre-ORBO baseline)');
+    console.log('[HoZ] build JULY-02-B loaded — blush/tint use plain clip(), no blur filter');
 
     // Initialize default state + build form for default product
     initDefaultState('lipstick');

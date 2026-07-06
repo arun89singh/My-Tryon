@@ -190,6 +190,7 @@ body {
 .form-card__index {
     font-weight: 700;
     margin-right: 6px;
+    display: none;
 }
 
 .form-card__help {
@@ -1066,5 +1067,49 @@ video ~ canvas{
     .tryon-card__head {
         flex-wrap: wrap;
         gap: 8px;
+    }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   MOBILE (≤640px) — reorder + collapsible accordion sections.
+   Desktop/tablet layout is untouched (these rules are phone-only).
+   Order: AI Try-On → sections 1–7 (accordion) → Live Preview.
+   ═══════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+    /* Flatten the wrappers so try-on / form sections / preview become direct
+       items of .layout and can be reordered with `order`. */
+    .builder, .builder-form, .sidebar { display: contents; }
+    .layout { row-gap: 14px; }
+
+    .tryon-card   { order: -1; }   /* AI Try-On first */
+    .preview-card { order: 10; }   /* Live Preview last */
+    /* form sections keep their natural DOM order (0) → sit between the two */
+
+    /* ── Accordion ── */
+    .form-card__title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        cursor: pointer;
+        user-select: none;
+    }
+    .form-card__title::after {
+        content: "";
+        flex: none;
+        width: 9px;
+        height: 9px;
+        margin-right: 2px;
+        border-right: 2px solid rgba(31, 31, 35, 0.55);
+        border-bottom: 2px solid rgba(31, 31, 35, 0.55);
+        transform: rotate(-135deg);            /* ^ up = expanded */
+        transition: transform 0.2s ease;
+    }
+    .form-card.is-collapsed .form-card__title::after {
+        transform: rotate(45deg);              /* v down = collapsed */
+    }
+    /* Hide everything except the title when collapsed */
+    .form-card.is-collapsed > *:not(.form-card__title) {
+        display: none !important;
     }
 }

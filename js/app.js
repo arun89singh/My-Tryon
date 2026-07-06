@@ -1003,6 +1003,53 @@ function compositeFace(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
     ctx.drawImage(maskCanvas, 0, 0);
 
     ctx.restore();
+
+    // ── DEWY finish → luminous highlight sheen on the face's high points ──
+    // Only for skin tint's "Dewy" finish; Natural/Matte stay flat (unchanged).
+    if ((state.finish || '') === 'Dewy' && landmarks) {
+        drawDewyGlow(ctx, landmarks, w, h, Math.max(shine, 0.45));
+    }
+}
+
+// Soft radiant highlights on the high points of the face (forehead, nose
+// bridge/tip, cheekbones, chin, cupid's bow) for a dewy/glowy skin finish.
+// Screen-blended white radial gradients — no ctx.filter (mobile-safe).
+function drawDewyGlow(ctx, landmarks, w, h, intensity) {
+    const lEdge = getPts(landmarks, w, h, [234])[0];
+    const rEdge = getPts(landmarks, w, h, [454])[0];
+    const top   = getPts(landmarks, w, h, [10])[0];
+    const chin  = getPts(landmarks, w, h, [152])[0];
+    const faceH = Math.hypot(chin.x - top.x, chin.y - top.y);
+    const faceW = Math.max(Math.abs(rEdge.x - lEdge.x), faceH * 0.55);
+
+    // [landmark index, radius as a fraction of face width]
+    const spots = [
+        [151, 0.15],  // forehead centre
+        [6,   0.05],  // nose bridge (top)
+        [195, 0.05],  // nose bridge (mid)
+        [4,   0.06],  // nose tip
+        [111, 0.12],  // right cheekbone
+        [340, 0.12],  // left cheekbone
+        [152, 0.10],  // chin
+        [0,   0.045], // cupid's bow
+    ];
+
+    const peak = Math.min(intensity * 0.55, 0.55);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';   // additive light = glow
+    for (const [idx, rFrac] of spots) {
+        const p = getPts(landmarks, w, h, [idx])[0];
+        const rad = faceW * rFrac;
+        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad);
+        g.addColorStop(0,   `rgba(255,255,255,${peak.toFixed(2)})`);
+        g.addColorStop(0.5, `rgba(255,255,255,${(peak * 0.35).toFixed(2)})`);
+        g.addColorStop(1,   'rgba(255,255,255,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.restore();
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1083,10 +1130,28 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     const bow = lid * 0.28;   // lower edge sits clearly ABOVE the lashes (off the lash line)
     const H   = lid * 0.30;   // shorter dome → curve sits a little lower on the lid
 
-    // LOWER edge = a stable arc that sits ABOVE the lashes (never on them);
-    // UPPER edge = an independent capsule dome up to ~the crease. Both come from
-    // the stable corner baseline, so the shape is the same on a blink and spans
-    // medial canthus → lateral canthus via the extended chord.
+    // Actual upper-lid (lash line) Y at a given x. When the eye CLOSES this line
+    // drops down, so the shadow can follow the lid down and stay visible ON the
+    // closed lid — while staying pinned at the stable floor when the eye is open.
+    const lsorted = [...lash].sort((p, q) => p.x - q.x);
+    const lashYAt = (x) => {
+        if (x <= lsorted[0].x) return lsorted[0].y;
+        const last = lsorted[lsorted.length - 1];
+        if (x >= last.x) return last.y;
+        for (let i = 1; i < lsorted.length; i++) {
+            if (x <= lsorted[i].x) {
+                const t = (x - lsorted[i - 1].x) / ((lsorted[i].x - lsorted[i - 1].x) || 1);
+                return lsorted[i - 1].y + t * (lsorted[i].y - lsorted[i - 1].y);
+            }
+        }
+        return last.y;
+    };
+    const lidFollow = lid * 0.10;   // keep the lower edge just above the actual lashes
+
+    // LOWER edge = stable arc above the lashes when open, but follows the lid
+    // DOWN when the eye closes (so the shadow shows on the CLOSED lid too).
+    // UPPER edge = independent capsule dome up to ~the crease from the stable
+    // baseline. Spans medial canthus → lateral canthus via the extended chord.
     const STEPS = 30;
     const lower = [], upper = [];
     for (let k = 0; k <= STEPS; k++) {
@@ -1095,8 +1160,11 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
         const cy = A.y + (B.y - A.y) * u;
         const archL = Math.sin(u * Math.PI);             // bow peaks in the middle
         const profU = Math.pow(1 - Math.pow(Math.abs(2 * u - 1), 3), 0.5); // capsule dome
-        const floorY = cy - bow * archL;                 // stable baseline, above the lashes
-        lower.push({ x: cx, y: floorY });
+        const floorY = cy - bow * archL;                 // stable baseline (eye open)
+        // Follow the lid down when the eye closes (lash drops below the floor);
+        // stay at the stable floor when the eye is open.
+        const lowerY = Math.max(floorY, lashYAt(cx) - lidFollow);
+        lower.push({ x: cx, y: lowerY });
         upper.push({ x: cx, y: floorY - H * profU });    // dome from the stable baseline
     }
 
@@ -2553,7 +2621,7 @@ const PRODUCT_ID_MAP = {
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[HoZ] build JULY-02-B loaded — blush/tint use plain clip(), no blur filter');
+    console.log('[HoZ] build JULY-06 loaded — eyeshadow shows on closed lid + mobile accordion');
 
     // Initialize default state + build form for default product
     initDefaultState('lipstick');
@@ -2573,6 +2641,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setupTryonTabs();
     setupTryonActions();
     setupCartAndCopy();
+    setupMobileAccordion();
 
     // Initial render
     recalcPrice();
@@ -2807,6 +2876,46 @@ function setupCartAndCopy() {
             setTimeout(() => { btnCart.textContent = 'ADD TO CART'; }, 2000);
         });
     }
+}
+
+// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//  MOBILE ACCORDION (phone only \u2014 desktop stays fully expanded)
+// \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+//  On phones (\u2264640px) each numbered form section collapses; tapping its
+//  title toggles it. Section 1 starts open, 2\u20137 start collapsed. On
+//  desktop/tablet the CSS never hides content, so this is a no-op there.
+function setupMobileAccordion() {
+    const mq = window.matchMedia('(max-width: 640px)');
+    const cards = Array.from(document.querySelectorAll('.builder-form .form-card'));
+    if (!cards.length) return;
+
+    // Set collapsed state to match the viewport: on mobile collapse all but the
+    // first; on desktop expand everything (so nothing is ever hidden there).
+    function applyState() {
+        cards.forEach((card, i) => {
+            if (mq.matches) card.classList.toggle('is-collapsed', i !== 0);
+            else card.classList.remove('is-collapsed');
+        });
+    }
+
+    cards.forEach(card => {
+        const title = card.querySelector('.form-card__title');
+        if (!title) return;
+        title.setAttribute('role', 'button');
+        title.setAttribute('tabindex', '0');
+        const toggle = () => {
+            if (!mq.matches) return;                 // desktop: titles aren't collapsible
+            card.classList.toggle('is-collapsed');
+        };
+        title.addEventListener('click', toggle);
+        title.addEventListener('keydown', e => {
+            if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+        });
+    });
+
+    applyState();
+    // Re-apply when crossing the mobile/desktop breakpoint.
+    (mq.addEventListener ? mq.addEventListener.bind(mq, 'change') : mq.addListener.bind(mq))(applyState);
 }
 
 })();

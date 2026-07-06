@@ -1017,38 +1017,82 @@ function compositeFace(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
 function drawDewyGlow(ctx, landmarks, w, h, intensity) {
     const lEdge = getPts(landmarks, w, h, [234])[0];
     const rEdge = getPts(landmarks, w, h, [454])[0];
-    const top   = getPts(landmarks, w, h, [10])[0];
-    const chin  = getPts(landmarks, w, h, [152])[0];
-    const faceH = Math.hypot(chin.x - top.x, chin.y - top.y);
+    const topP  = getPts(landmarks, w, h, [10])[0];
+    const chinP = getPts(landmarks, w, h, [152])[0];
+    const faceH = Math.hypot(chinP.x - topP.x, chinP.y - topP.y);
     const faceW = Math.max(Math.abs(rEdge.x - lEdge.x), faceH * 0.55);
+    const peak  = Math.min(intensity * 0.42, 0.4);
 
-    // [landmark index, radius as a fraction of face width]
-    const spots = [
-        [151, 0.15],  // forehead centre
-        [6,   0.05],  // nose bridge (top)
-        [195, 0.05],  // nose bridge (mid)
-        [4,   0.06],  // nose tip
-        [111, 0.12],  // right cheekbone
-        [340, 0.12],  // left cheekbone
-        [152, 0.10],  // chin
-        [0,   0.045], // cupid's bow
-    ];
+    // Lifted face oval — raise the forehead edge toward the HAIRLINE so the glow
+    // can cover the FULL forehead (the mesh's top point, landmark 10, sits only
+    // mid-forehead, which is why the glow was cut off at half the forehead).
+    const cyLift   = topP.y + faceH * 0.42;
+    const oval     = getPts(landmarks, w, h, FACE_OVAL);
+    const ovalTopY = Math.min(...oval.map(p => p.y));
+    const foreLift = faceH * 0.22;
+    const clipPts  = oval.map(p => (p.y < cyLift
+        ? { x: p.x, y: p.y - foreLift * ((cyLift - p.y) / (cyLift - ovalTopY)) }
+        : p));
 
-    const peak = Math.min(intensity * 0.55, 0.55);
     ctx.save();
+    ctx.beginPath();
+    tracePath(ctx, clipPts);           // plain clip, no filter → mobile-safe
+    ctx.clip();
     ctx.globalCompositeOperation = 'screen';   // additive light = glow
-    for (const [idx, rFrac] of spots) {
-        const p = getPts(landmarks, w, h, [idx])[0];
-        const rad = faceW * rFrac;
-        const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, rad);
-        g.addColorStop(0,   `rgba(255,255,255,${peak.toFixed(2)})`);
-        g.addColorStop(0.5, `rgba(255,255,255,${(peak * 0.35).toFixed(2)})`);
+
+    // Gentle base so the highlights sit on a soft overall glow (not islands).
+    const cx = (lEdge.x + rEdge.x) / 2;
+    const cy = topP.y + faceH * 0.5;
+    const baseR = Math.max(faceW, faceH) * 0.72;
+    const base = ctx.createRadialGradient(cx, cy, 0, cx, cy, baseR);
+    base.addColorStop(0,   `rgba(255,255,255,${(peak * 0.5).toFixed(2)})`);
+    base.addColorStop(0.7, `rgba(255,255,255,${(peak * 0.3).toFixed(2)})`);
+    base.addColorStop(1,   'rgba(255,255,255,0)');
+    ctx.fillStyle = base;
+    ctx.fillRect(0, 0, w, h);
+
+    // One elliptical soft highlight (px,py center; rx,ry radii; k = strength).
+    const glow = (px, py, rx, ry, k) => {
+        const R = Math.max(rx, ry);
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.scale(rx / R, ry / R);
+        ctx.translate(-px, -py);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, R);
+        g.addColorStop(0,   `rgba(255,255,255,${(peak * k).toFixed(2)})`);
+        g.addColorStop(0.6, `rgba(255,255,255,${(peak * k * 0.28).toFixed(2)})`);
         g.addColorStop(1,   'rgba(255,255,255,0)');
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, rad, 0, Math.PI * 2);
+        ctx.arc(px, py, R, 0, Math.PI * 2);
         ctx.fill();
+        ctx.restore();
+    };
+    const P = i => getPts(landmarks, w, h, [i])[0];
+
+    // FULL forehead: a big wide glow pushed UP toward the hairline, plus side
+    // fills — so the entire forehead lights up, not just the lower half.
+    const fc = P(151);
+    glow(fc.x, fc.y - faceH * 0.12, faceW * 0.38, faceH * 0.24, 1.0);
+    const fL = P(108), fR = P(337);
+    glow(fL.x, fL.y - faceH * 0.05, faceW * 0.17, faceH * 0.17, 0.85);
+    glow(fR.x, fR.y - faceH * 0.05, faceW * 0.17, faceH * 0.17, 0.85);
+
+    // Nose (bridge → tip).
+    glow(P(6).x,   P(6).y,   faceW * 0.08, faceW * 0.13, 0.9);
+    glow(P(195).x, P(195).y, faceW * 0.07, faceW * 0.12, 0.9);
+    glow(P(4).x,   P(4).y,   faceW * 0.10, faceW * 0.09, 0.9);
+
+    // Cheeks (cheekbone + apple + lower cheek, both sides).
+    for (const i of [117, 346, 50, 280, 205, 425]) {
+        const p = P(i);
+        glow(p.x, p.y, faceW * 0.18, faceW * 0.15, 0.9);
     }
+
+    // Chin + cupid's bow.
+    glow(P(152).x, P(152).y, faceW * 0.14, faceW * 0.11, 0.85);
+    glow(P(0).x,   P(0).y,   faceW * 0.07, faceW * 0.05, 0.7);
+
     ctx.restore();
 }
 
@@ -1127,8 +1171,8 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     const A = { x: A0.x - dx * eA, y: A0.y - dy * eA };
     const B = { x: B0.x + dx * eB, y: B0.y + dy * eB };
 
-    const bow = lid * 0.28;   // lower edge sits clearly ABOVE the lashes (off the lash line)
-    const H   = lid * 0.30;   // shorter dome → curve sits a little lower on the lid
+    const bow = lid * 0.16;   // lower edge sits JUST above the lashes (on the lid, not floating up toward the brow)
+    const H   = lid * 0.34;   // reaches ABOVE the crease, fuller toward the outer corner (winged)
 
     // Actual upper-lid (lash line) Y at a given x. When the eye CLOSES this line
     // drops down, so the shadow can follow the lid down and stay visible ON the
@@ -1159,11 +1203,23 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
         const cx = A.x + (B.x - A.x) * u;                // along the corner chord
         const cy = A.y + (B.y - A.y) * u;
         const archL = Math.sin(u * Math.PI);             // bow peaks in the middle
-        const profU = Math.pow(1 - Math.pow(Math.abs(2 * u - 1), 3), 0.5); // capsule dome
+        // WINGED upper edge (matches the reference): tapers to a point at the
+        // inner canthus, rises FULLER toward the OUTER corner (the above-crease
+        // sweep), and tapers again to the wing tip at the extended outer corner.
+        const tio   = outerAtStart ? (1 - u) : u;        // 0 = inner corner → 1 = outer
+        const profU = Math.sin(Math.PI * Math.pow(tio, 1.4));
         const floorY = cy - bow * archL;                 // stable baseline (eye open)
         // Follow the lid down when the eye closes (lash drops below the floor);
         // stay at the stable floor when the eye is open.
-        const lowerY = Math.max(floorY, lashYAt(cx) - lidFollow);
+        const lashDrop  = lashYAt(cx) - lidFollow;
+        const baseLower = Math.max(floorY, lashDrop);
+        // On the CLOSED eye the lower edge would otherwise run FLAT across the
+        // closed-lash line. Add a centre arch (proportional to how far the lash
+        // has dropped, i.e. how closed the eye is) so the bottom edge CURVES UP
+        // toward the centre of the upper eyelid — a natural crescent, not a
+        // straight band. On the open eye `drop` is 0, so nothing changes.
+        const drop   = Math.max(0, lashDrop - floorY);
+        const lowerY = baseLower - drop * 0.25 * Math.sin(u * Math.PI);
         lower.push({ x: cx, y: lowerY });
         upper.push({ x: cx, y: floorY - H * profU });    // dome from the stable baseline
     }
@@ -1184,6 +1240,56 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     g.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0)`);    // lightest — toward the crease
     ctx.fillStyle = g;
     ctx.fill();
+
+    // ── Dimension (reference look): darker OUTER corner (smoky V) + lighter
+    //    metallic CENTRE sheen. Both are painted INSIDE the lid via a plain clip
+    //    (no filter → mobile-safe), so they can't spill off the shape.
+    const mi = Math.floor(STEPS / 2);
+    const midLidX = lower[mi].x;
+    const midLidY = (lower[mi].y + upper[mi].y) / 2;
+
+    const dk = { r: Math.round(c.r * 0.5), g: Math.round(c.g * 0.5), b: Math.round(c.b * 0.5) };
+    const lt = { r: Math.round(c.r + (255 - c.r) * 0.55),
+                 g: Math.round(c.g + (255 - c.g) * 0.55),
+                 b: Math.round(c.b + (255 - c.b) * 0.55) };
+
+    const outerPt = outerAtStart ? A : B;
+    const deepCx  = outerPt.x + (midX - outerPt.x) * 0.18; // a touch inward from the corner
+    const deepCy  = outerPt.y - lid * 0.14;                // lifted toward the crease
+    const deepR   = lid * 0.62;
+    const sheenRx = lid * 0.78, sheenRy = lid * 0.42;
+
+    ctx.save();
+    ctx.filter = 'none';
+    ctx.beginPath();
+    traceSmoothClosed(ctx, loop);   // clip to the lid shape
+    ctx.clip();
+
+    // Outer smoky deepening.
+    const dg = ctx.createRadialGradient(deepCx, deepCy, 0, deepCx, deepCy, deepR);
+    dg.addColorStop(0,    `rgba(${dk.r},${dk.g},${dk.b},0.85)`);
+    dg.addColorStop(0.55, `rgba(${dk.r},${dk.g},${dk.b},0.32)`);
+    dg.addColorStop(1,    `rgba(${dk.r},${dk.g},${dk.b},0)`);
+    ctx.fillStyle = dg;
+    ctx.fillRect(0, 0, w, h);
+
+    // Lighter metallic centre sheen, elongated along the lid.
+    const R2 = Math.max(sheenRx, sheenRy);
+    ctx.save();
+    ctx.translate(midLidX, midLidY);
+    ctx.scale(sheenRx / R2, sheenRy / R2);
+    ctx.translate(-midLidX, -midLidY);
+    const lg = ctx.createRadialGradient(midLidX, midLidY, 0, midLidX, midLidY, R2);
+    lg.addColorStop(0,   `rgba(${lt.r},${lt.g},${lt.b},0.38)`);
+    lg.addColorStop(0.6, `rgba(${lt.r},${lt.g},${lt.b},0.12)`);
+    lg.addColorStop(1,   `rgba(${lt.r},${lt.g},${lt.b},0)`);
+    ctx.fillStyle = lg;
+    ctx.beginPath();
+    ctx.arc(midLidX, midLidY, R2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore();
 }
 
 function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
@@ -1219,12 +1325,12 @@ function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
         const rightBrow   = centroid(landmarks, w, h, RIGHT_EYEBROW);
 
         const eyeDist  = Math.abs(rightCenter.x - leftCenter.x);
-        const shimmerR = eyeDist * 0.075;
+        const shimmerR = eyeDist * 0.11;   // larger, prominent metallic pop
 
-        // Shimmer sits on the lid skin — slightly above eye center, low-mid lid
+        // Shimmer sits LOW on the lid (near the lash line), not up toward the brow.
         const placeShimmer = (eyeCenter, browCenter) => {
             const gap = Math.abs(browCenter.y - eyeCenter.y);
-            return { x: eyeCenter.x, y: eyeCenter.y - gap * 0.30 };
+            return { x: eyeCenter.x, y: eyeCenter.y - gap * 0.15 };
         };
 
         ctx.globalCompositeOperation = 'screen';
@@ -1232,14 +1338,20 @@ function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
             placeShimmer(leftCenter, leftBrow),
             placeShimmer(rightCenter, rightBrow),
         ].forEach(center => {
+            // Elongated along the lid for a luminous metallic sheen (not a dot).
+            ctx.save();
+            ctx.translate(center.x, center.y);
+            ctx.scale(1.5, 0.8);
+            ctx.translate(-center.x, -center.y);
             const grd = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, shimmerR);
-            grd.addColorStop(0,   `rgba(${hr},${hg},${hb},${(shimmer * 0.30).toFixed(2)})`);
-            grd.addColorStop(0.5, `rgba(${hr},${hg},${hb},${(shimmer * 0.10).toFixed(2)})`);
+            grd.addColorStop(0,   `rgba(${hr},${hg},${hb},${Math.min(shimmer * 0.5, 0.55).toFixed(2)})`);
+            grd.addColorStop(0.55,`rgba(${hr},${hg},${hb},${(shimmer * 0.18).toFixed(2)})`);
             grd.addColorStop(1,   `rgba(${hr},${hg},${hb},0)`);
             ctx.fillStyle = grd;
             ctx.beginPath();
             ctx.arc(center.x, center.y, shimmerR, 0, Math.PI * 2);
             ctx.fill();
+            ctx.restore();
         });
     }
 

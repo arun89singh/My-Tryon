@@ -1152,31 +1152,10 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
         return best.y;
     };
 
-    // ── STABLE anchors ──
-    // The eye CORNERS and the EYEBROW barely move when you blink, unlike the
-    // mid-lid lash points (which collapse when the eye closes). We rebuild the
-    // ENTIRE shape from just the corners + brow, so the eyeshadow stays the
-    // SAME whether the eye is open or closed.
-    const A0 = lash[0], B0 = lash[n - 1];            // eye corners (stable)
-    const midX = (A0.x + B0.x) / 2;
-    const cornerMidY = (A0.y + B0.y) / 2;
-    const lid = Math.max(cornerMidY - browYAt(midX), ew * 0.40); // corner→brow gap
-
-    // Extend the chord PAST the corners so the band reaches both canthi — and a
-    // bit MORE past the OUTER (lateral) corner so it sweeps toward it.
-    const dx = B0.x - A0.x, dy = B0.y - A0.y;
-    const extOuter = 0.14, extInner = 0.05;
-    const eA = outerAtStart ? extOuter : extInner;   // A is the outer corner when outerAtStart
-    const eB = outerAtStart ? extInner : extOuter;
-    const A = { x: A0.x - dx * eA, y: A0.y - dy * eA };
-    const B = { x: B0.x + dx * eB, y: B0.y + dy * eB };
-
-    const bow = lid * 0.16;   // lower edge sits JUST above the lashes (on the lid, not floating up toward the brow)
-    const H   = lid * 0.34;   // reaches ABOVE the crease, fuller toward the outer corner (winged)
-
-    // Actual upper-lid (lash line) Y at a given x. When the eye CLOSES this line
-    // drops down, so the shadow can follow the lid down and stay visible ON the
-    // closed lid — while staying pinned at the stable floor when the eye is open.
+    // ── Shape FOLLOWS the upper lash line ──
+    // The whole shape is anchored to the lash line, so it sits on the lid
+    // whether the eye is OPEN or CLOSED: on a closed eye the lash line drops and
+    // the shadow drops with it to cover the closed lid.
     const lsorted = [...lash].sort((p, q) => p.x - q.x);
     const lashYAt = (x) => {
         if (x <= lsorted[0].x) return lsorted[0].y;
@@ -1190,38 +1169,34 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
         }
         return last.y;
     };
-    const lidFollow = lid * 0.10;   // keep the lower edge just above the actual lashes
 
-    // LOWER edge = stable arc above the lashes when open, but follows the lid
-    // DOWN when the eye closes (so the shadow shows on the CLOSED lid too).
-    // UPPER edge = independent capsule dome up to ~the crease from the stable
-    // baseline. Spans medial canthus → lateral canthus via the extended chord.
-    const STEPS = 30;
+    // Corners (canthi) + a small extension past each so the shape reaches both
+    // corners, with a touch MORE past the OUTER corner for the natural lift.
+    const A0 = lash[0], B0 = lash[n - 1];
+    const midX = (A0.x + B0.x) / 2;
+    const dx = B0.x - A0.x, dy = B0.y - A0.y;
+    const extOuter = 0.10, extInner = 0.04;
+    const eA = outerAtStart ? extOuter : extInner;   // A is the outer corner when outerAtStart
+    const eB = outerAtStart ? extInner : extOuter;
+    const A = { x: A0.x - dx * eA, y: A0.y - dy * eA };
+    const B = { x: B0.x + dx * eB, y: B0.y + dy * eB };
+
+    // LOWER edge = just above the lash line. UPPER edge = a smooth rounded arch
+    // up to ~the crease (a fraction of the lash→brow gap), tapering at both
+    // corners with a slight OUTER lift. Both taper together at the corners so
+    // the shape reads as one rounded almond covering the whole upper lid.
+    const STEPS = 32;
     const lower = [], upper = [];
     for (let k = 0; k <= STEPS; k++) {
-        const u  = k / STEPS;                            // 0 (corner A) → 1 (corner B)
-        const cx = A.x + (B.x - A.x) * u;                // along the corner chord
-        const cy = A.y + (B.y - A.y) * u;
-        const archL = Math.sin(u * Math.PI);             // bow peaks in the middle
-        // WINGED upper edge (matches the reference): tapers to a point at the
-        // inner canthus, rises FULLER toward the OUTER corner (the above-crease
-        // sweep), and tapers again to the wing tip at the extended outer corner.
-        const tio   = outerAtStart ? (1 - u) : u;        // 0 = inner corner → 1 = outer
-        const profU = Math.sin(Math.PI * Math.pow(tio, 1.4));
-        const floorY = cy - bow * archL;                 // stable baseline (eye open)
-        // Follow the lid down when the eye closes (lash drops below the floor);
-        // stay at the stable floor when the eye is open.
-        const lashDrop  = lashYAt(cx) - lidFollow;
-        const baseLower = Math.max(floorY, lashDrop);
-        // On the CLOSED eye the lower edge would otherwise run FLAT across the
-        // closed-lash line. Add a centre arch (proportional to how far the lash
-        // has dropped, i.e. how closed the eye is) so the bottom edge CURVES UP
-        // toward the centre of the upper eyelid — a natural crescent, not a
-        // straight band. On the open eye `drop` is 0, so nothing changes.
-        const drop   = Math.max(0, lashDrop - floorY);
-        const lowerY = baseLower - drop * 0.25 * Math.sin(u * Math.PI);
-        lower.push({ x: cx, y: lowerY });
-        upper.push({ x: cx, y: floorY - H * profU });    // dome from the stable baseline
+        const u    = k / STEPS;                      // 0 = corner A → 1 = corner B
+        const cx   = A.x + (B.x - A.x) * u;
+        const ly   = lashYAt(cx);
+        const gap  = Math.max(ly - browYAt(cx), ew * 0.30);  // lash → brow at this x
+        const t    = outerAtStart ? (1 - u) : u;     // 0 = inner corner → 1 = outer
+        const arch = Math.pow(Math.max(0, Math.sin(u * Math.PI)), 0.7); // rounded, tapers at corners
+        const domeFrac = 0.60 * arch * (0.9 + 0.28 * t);     // up to ~above-crease + slight outer lift
+        lower.push({ x: cx, y: ly - gap * 0.08 * arch });    // just above the lashes
+        upper.push({ x: cx, y: ly - gap * domeFrac });       // up toward the crease
     }
 
     // Closed loop: reconstructed lash arc (A→B), then the dome back (B→A),
@@ -1241,54 +1216,27 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     ctx.fillStyle = g;
     ctx.fill();
 
-    // ── Dimension (reference look): darker OUTER corner (smoky V) + lighter
-    //    metallic CENTRE sheen. Both are painted INSIDE the lid via a plain clip
-    //    (no filter → mobile-safe), so they can't spill off the shape.
-    const mi = Math.floor(STEPS / 2);
-    const midLidX = lower[mi].x;
-    const midLidY = (lower[mi].y + upper[mi].y) / 2;
-
-    const dk = { r: Math.round(c.r * 0.5), g: Math.round(c.g * 0.5), b: Math.round(c.b * 0.5) };
-    const lt = { r: Math.round(c.r + (255 - c.r) * 0.55),
-                 g: Math.round(c.g + (255 - c.g) * 0.55),
-                 b: Math.round(c.b + (255 - c.b) * 0.55) };
-
+    // ── Subtle depth toward the OUTER corner (matches the reference's deeper
+    //    outer edge). Painted INSIDE the shape via a plain clip (no filter →
+    //    mobile-safe). Kept subtle for consistent intensity across the lid. ──
     const outerPt = outerAtStart ? A : B;
-    const deepCx  = outerPt.x + (midX - outerPt.x) * 0.18; // a touch inward from the corner
-    const deepCy  = outerPt.y - lid * 0.14;                // lifted toward the crease
-    const deepR   = lid * 0.62;
-    const sheenRx = lid * 0.78, sheenRy = lid * 0.42;
+    const gapMid  = Math.max(lashYAt(midX) - browYAt(midX), ew * 0.30);
+    const dk = { r: Math.round(c.r * 0.55), g: Math.round(c.g * 0.55), b: Math.round(c.b * 0.55) };
+    const deepCx = outerPt.x + (midX - outerPt.x) * 0.15;
+    const deepCy = outerPt.y - gapMid * 0.20;
+    const deepR  = gapMid * 0.65;
 
     ctx.save();
     ctx.filter = 'none';
     ctx.beginPath();
     traceSmoothClosed(ctx, loop);   // clip to the lid shape
     ctx.clip();
-
-    // Outer smoky deepening.
     const dg = ctx.createRadialGradient(deepCx, deepCy, 0, deepCx, deepCy, deepR);
-    dg.addColorStop(0,    `rgba(${dk.r},${dk.g},${dk.b},0.85)`);
-    dg.addColorStop(0.55, `rgba(${dk.r},${dk.g},${dk.b},0.32)`);
-    dg.addColorStop(1,    `rgba(${dk.r},${dk.g},${dk.b},0)`);
+    dg.addColorStop(0,   `rgba(${dk.r},${dk.g},${dk.b},0.55)`);
+    dg.addColorStop(0.6, `rgba(${dk.r},${dk.g},${dk.b},0.18)`);
+    dg.addColorStop(1,   `rgba(${dk.r},${dk.g},${dk.b},0)`);
     ctx.fillStyle = dg;
     ctx.fillRect(0, 0, w, h);
-
-    // Lighter metallic centre sheen, elongated along the lid.
-    const R2 = Math.max(sheenRx, sheenRy);
-    ctx.save();
-    ctx.translate(midLidX, midLidY);
-    ctx.scale(sheenRx / R2, sheenRy / R2);
-    ctx.translate(-midLidX, -midLidY);
-    const lg = ctx.createRadialGradient(midLidX, midLidY, 0, midLidX, midLidY, R2);
-    lg.addColorStop(0,   `rgba(${lt.r},${lt.g},${lt.b},0.38)`);
-    lg.addColorStop(0.6, `rgba(${lt.r},${lt.g},${lt.b},0.12)`);
-    lg.addColorStop(1,   `rgba(${lt.r},${lt.g},${lt.b},0)`);
-    ctx.fillStyle = lg;
-    ctx.beginPath();
-    ctx.arc(midLidX, midLidY, R2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
     ctx.restore();
 }
 
@@ -3004,8 +2952,11 @@ function setupMobileAccordion() {
     // Set collapsed state to match the viewport: on mobile collapse all but the
     // first; on desktop expand everything (so nothing is ever hidden there).
     function applyState() {
-        cards.forEach((card, i) => {
-            if (mq.matches) card.classList.toggle('is-collapsed', i !== 0);
+        cards.forEach((card) => {
+            // On mobile, open the section shown FIRST (Choose shade); collapse
+            // the rest. On desktop nothing is collapsed.
+            const openByDefault = card.id === 'shade-section';
+            if (mq.matches) card.classList.toggle('is-collapsed', !openByDefault);
             else card.classList.remove('is-collapsed');
         });
     }

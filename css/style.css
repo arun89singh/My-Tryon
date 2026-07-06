@@ -1083,7 +1083,16 @@ video ~ canvas{
 
     .tryon-card   { order: -1; }   /* AI Try-On first */
     .preview-card { order: 10; }   /* Live Preview last */
-    /* form sections keep their natural DOM order (0) → sit between the two */
+
+    /* Form-section order on mobile: Choose shade BEFORE Choose your product,
+       the rest follow. (Desktop keeps natural DOM order — this is phone-only.) */
+    .form-card[aria-label="Choose shade"]                  { order: 1; }
+    .form-card[aria-label="Choose product"]                { order: 2; }
+    .form-card[aria-label="Product options"]               { order: 3; }
+    .form-card[aria-label="Ingredients and benefits"]      { order: 4; }
+    .form-card[aria-label="Fragrance"]                     { order: 5; }
+    .form-card[aria-label="Packaging and personalization"] { order: 6; }
+    .form-card[aria-label="Quantity"]                      { order: 7; }
 
     /* ── Accordion ── */
     .form-card__title {

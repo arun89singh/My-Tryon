@@ -331,6 +331,25 @@ function traceSmoothClosed(ctx, pts) {
     ctx.closePath();
 }
 
+// Trace an eyeshadow outline with SMOOTH lash & crease edges but SHARP inner
+// and outer corners (where the two edges meet). `lower` and `upper` both run
+// from the inner corner to the outer corner.
+function traceEyeShape(ctx, lower, upper) {
+    const smoothEdge = (pts) => {
+        for (let i = 1; i < pts.length - 1; i++) {
+            ctx.quadraticCurveTo(pts[i].x, pts[i].y,
+                (pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2);
+        }
+        ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
+    };
+    ctx.moveTo(lower[0].x, lower[0].y);   // inner corner (sharp)
+    smoothEdge(lower);                    // along the lash line → outer corner
+    const up = [...upper].reverse();      // outer corner → inner corner
+    ctx.lineTo(up[0].x, up[0].y);         // sharp outer corner
+    smoothEdge(up);                       // along the crease edge back
+    ctx.closePath();                      // sharp inner corner
+}
+
 function expandContour(pts, factor, cornerBoost = 0) {
     let cx = 0, cy = 0;
     for (let i = 0; i < pts.length; i++) { cx += pts[i].x; cy += pts[i].y; }
@@ -561,13 +580,20 @@ function compositeLipGloss(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
     if (!landmarks) return;
 
     // Sheer color wash from the selected shade. Gloss is translucent, so we
-    // draw the colored lip mask at reduced alpha (not fully clear like before
-    // — picking a shade now actually shows up), then layer the wet specular
-    // highlights on top.
+    // draw the colour fairly light, then layer the wet specular highlights on
+    // top. We paint a slightly TIGHTENED lip shape (contracted a touch) so the
+    // colour sits precisely ON the lips instead of overshooting the lip line.
+    const c = hexToRgb(state.shade);
+    const gOuter = expandContour(getPts(landmarks, w, h, LIP_OUTER), 0.95);
+    const gInner = getPts(landmarks, w, h, LIP_INNER);
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
-    ctx.globalAlpha = Math.min(opacity * 0.55, 0.7);
-    ctx.drawImage(maskCanvas, 0, 0);
+    ctx.globalAlpha = Math.min(opacity * 0.5, 0.6);
+    ctx.fillStyle = `rgb(${c.r},${c.g},${c.b})`;
+    ctx.beginPath();
+    tracePath(ctx, gOuter);
+    tracePath(ctx, [...gInner].reverse());
+    ctx.fill('evenodd');
     ctx.restore();
 
     ctx.save();
@@ -604,12 +630,12 @@ function compositeLipGloss(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
     // ── UPPER LIP HIGHLIGHT ──
     // Band between upper outer edge (lip top) and 30% down toward inner edge
     // Horizontal fade at ends so it's brightest in center, dim at corners.
-    drawSpecularBand(ctx, upOuter, upInner, 0.35, s * 0.55);
+    drawSpecularBand(ctx, upOuter, upInner, 0.35, s * 0.65);
 
     // ── LOWER LIP HIGHLIGHT ──
     // Band between inner edge (mouth seam) and 35% down toward outer edge
-    // Lower lip catches more light — make slightly brighter
-    drawSpecularBand(ctx, loInner, loOuter, 0.38, s * 0.70);
+    // Lower lip catches more light — make slightly brighter (wet gloss shine)
+    drawSpecularBand(ctx, loInner, loOuter, 0.38, s * 0.85);
 
     ctx.filter = 'none';
     ctx.restore();
@@ -972,9 +998,9 @@ function renderFaceMask(ctx, landmarks, w, h, hexColor, blurPx) {
     // ── Cut the eyes and lips out (destination-out, no filter) ────
     // Less horizontal expansion (1.35) so the eye cutout doesn't bulge toward
     // the nose; more vertical (1.8) to keep margin above/below the eye.
-    const leftEye  = expandXY(getPts(landmarks, w, h, LEFT_EYE),  1.35, 1.8);
-    const rightEye = expandXY(getPts(landmarks, w, h, RIGHT_EYE), 1.35, 1.8);
-    const lips     = expandContour(getPts(landmarks, w, h, LIP_OUTER), 1.15);
+    const leftEye  = expandXY(getPts(landmarks, w, h, LEFT_EYE),  1.09, 1.1);
+    const rightEye = expandXY(getPts(landmarks, w, h, RIGHT_EYE), 1.09, 1.1);
+    const lips     = expandContour(getPts(landmarks, w, h, LIP_OUTER), 1.01);
     ctx.save();
     ctx.globalCompositeOperation = 'destination-out';
     ctx.fillStyle = '#000';
@@ -1175,7 +1201,7 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     const A0 = lash[0], B0 = lash[n - 1];
     const midX = (A0.x + B0.x) / 2;
     const dx = B0.x - A0.x, dy = B0.y - A0.y;
-    const extOuter = 0.10, extInner = 0.04;
+    const extOuter = 0.38, extInner = 0.05;   // extend the OUTER corner further out (wing toward ear)
     const eA = outerAtStart ? extOuter : extInner;   // A is the outer corner when outerAtStart
     const eB = outerAtStart ? extInner : extOuter;
     const A = { x: A0.x - dx * eA, y: A0.y - dy * eA };
@@ -1191,19 +1217,23 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
         const u    = k / STEPS;                      // 0 = corner A → 1 = corner B
         const cx   = A.x + (B.x - A.x) * u;
         const ly   = lashYAt(cx);
-        const gap  = Math.max(ly - browYAt(cx), ew * 0.30);  // lash → brow at this x
-        const t    = outerAtStart ? (1 - u) : u;     // 0 = inner corner → 1 = outer
-        const arch = Math.pow(Math.max(0, Math.sin(u * Math.PI)), 0.7); // rounded, tapers at corners
-        const domeFrac = 0.60 * arch * (0.9 + 0.28 * t);     // up to ~above-crease + slight outer lift
-        lower.push({ x: cx, y: ly - gap * 0.08 * arch });    // just above the lashes
-        upper.push({ x: cx, y: ly - gap * domeFrac });       // up toward the crease
+        const t   = outerAtStart ? (1 - u) : u;     // 0 = inner corner → 1 = outer
+        // CAPSULE profile: stays FULL height across the whole eye and tapers to
+        // points only right at the corners → an elongated almond that reaches
+        // BOTH the inner (nose) and outer (ear) corners, not a central hump.
+        const cap = Math.pow(Math.max(0, 1 - Math.pow(Math.abs(2 * u - 1), 3.5)), 0.5);
+        // Height keyed to EYE WIDTH so it sits on the lid (never the brow bone).
+        const domeH    = ew * 0.56 * cap * (0.7 + 0.30 * t);   // above-crease, a bit taller at the outer
+        // WING: sweep the OUTER corner UP toward the ear/temple (lifts both edges
+        // so the outer end rises into a wing tip instead of drooping to the lash).
+        const wingLift = ew * 0.07 * Math.pow(t, 2.2);
+        lower.push({ x: cx, y: ly - ew * 0.03 * cap - wingLift }); // right on/above the lash line
+        upper.push({ x: cx, y: ly - domeH - wingLift });            // above-crease dome + outer wing
     }
 
-    // Closed loop: reconstructed lash arc (A→B), then the dome back (B→A),
-    // curve-smoothed so the outline reads as one soft cosmetic shape.
-    const loop = lower.concat([...upper].reverse());
+    // Trace with SMOOTH lash & crease edges but SHARP inner + outer corners.
     ctx.beginPath();
-    traceSmoothClosed(ctx, loop);
+    traceEyeShape(ctx, lower, upper);
 
     // Dark at the lash line (the eye) → lighter toward the crease.
     const topY = Math.min(...upper.map(p => p.y));
@@ -1212,24 +1242,37 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     g.addColorStop(0,    `rgba(${c.r},${c.g},${c.b},1.00)`); // darkest — at the lashes
     g.addColorStop(0.40, `rgba(${c.r},${c.g},${c.b},0.80)`);
     g.addColorStop(0.75, `rgba(${c.r},${c.g},${c.b},0.42)`);
-    g.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0)`);    // lightest — toward the crease
+    g.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0.60)`);    // lightest — toward the crease
     ctx.fillStyle = g;
     ctx.fill();
+
+    // DEBUG: add ?eyeoutline=1 to the URL to draw the exact shape as a bright
+    // outline (visible regardless of shade / lighting) so the shape can be
+    // verified against the reference. Off by default; safe to leave in.
+    if (typeof location !== 'undefined' && location.search.indexOf('eyeoutline') !== -1) {
+        ctx.save();
+        ctx.filter = 'none';
+        ctx.beginPath();
+        traceEyeShape(ctx, lower, upper);
+        ctx.strokeStyle = 'rgba(255,0,255,0.95)';
+        ctx.lineWidth = Math.max(ew * 0.02, 2);
+        ctx.stroke();
+        ctx.restore();
+    }
 
     // ── Subtle depth toward the OUTER corner (matches the reference's deeper
     //    outer edge). Painted INSIDE the shape via a plain clip (no filter →
     //    mobile-safe). Kept subtle for consistent intensity across the lid. ──
     const outerPt = outerAtStart ? A : B;
-    const gapMid  = Math.max(lashYAt(midX) - browYAt(midX), ew * 0.30);
     const dk = { r: Math.round(c.r * 0.55), g: Math.round(c.g * 0.55), b: Math.round(c.b * 0.55) };
     const deepCx = outerPt.x + (midX - outerPt.x) * 0.15;
-    const deepCy = outerPt.y - gapMid * 0.20;
-    const deepR  = gapMid * 0.65;
+    const deepCy = outerPt.y - ew * 0.14;
+    const deepR  = ew * 0.42;
 
     ctx.save();
     ctx.filter = 'none';
     ctx.beginPath();
-    traceSmoothClosed(ctx, loop);   // clip to the lid shape
+    traceEyeShape(ctx, lower, upper);   // clip to the lid shape
     ctx.clip();
     const dg = ctx.createRadialGradient(deepCx, deepCy, 0, deepCx, deepCy, deepR);
     dg.addColorStop(0,   `rgba(${dk.r},${dk.g},${dk.b},0.55)`);
@@ -1240,6 +1283,27 @@ function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
     ctx.restore();
 }
 
+// Scatter bright glitter specks in an ellipse (cx,cy ± rx,ry), concentrated
+// toward the centre and fading out. Deterministic (seeded) so the pattern is
+// stable frame-to-frame and tracks the eye. Draw white specks with source-over;
+// the caller composites them additively (screen) and clips to the lid.
+function drawGlitter(ctx, cx, cy, rx, ry, unit, count, intensity, seed) {
+    let s = (seed >>> 0) || 1;
+    const rnd = () => { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; };
+    for (let i = 0; i < count; i++) {
+        const ang = rnd() * Math.PI * 2;
+        const rr  = Math.pow(rnd(), 0.85);                 // slight centre bias
+        const px  = cx + Math.cos(ang) * rx * rr;
+        const py  = cy + Math.sin(ang) * ry * rr;
+        const size = unit * (0.4 + rnd() * 1.1);           // varied speck sizes
+        const a = Math.min(intensity * (0.5 + rnd() * 0.5) * (1 - rr * 0.45), 0.95);
+        ctx.fillStyle = `rgba(255,255,255,${a.toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(px, py, size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
 function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
     const finish  = state.finish || '';
     const pigment = state.pigmentation || '';
@@ -1248,9 +1312,12 @@ function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
     const PIG_MUL   = { Soft: 0.78, Medium: 1.0, Intense: 1.3 };
     const fillAlpha = Math.min(opacity * 1.25 * (PIG_MUL[pigment] ?? 1.0), 1.0);
 
-    // Finish → shimmer amount. Matte = none, Glitter = most. Default ≈ subtle.
-    const SHIM_MUL = { Matte: 0.0, Shimmer: 1.0, Metallic: 1.25, Glitter: 1.6 };
+    // Finish → smooth sheen amount + GLITTER amount. Matte = none; Glitter =
+    // heavy sparkle (like the reference); Metallic/Shimmer in between.
+    const SHIM_MUL = { Matte: 0.0, Shimmer: 1.0, Metallic: 1.25, Glitter: 1.2 };
+    const GLIT_MUL = { Matte: 0.0, Shimmer: 0.6, Metallic: 0.7, Glitter: 1.7 };
     const shimmer  = shine * (SHIM_MUL[finish] ?? 0.6);
+    const glitter  = shine * (GLIT_MUL[finish] ?? 0.6);
 
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';

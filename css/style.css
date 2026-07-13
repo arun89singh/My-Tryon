@@ -980,6 +980,10 @@ select.control {
     width: 100%;
     height: auto;
     border-radius: 12px;
+    /* Snapchat-style SOFT BEAUTY preview (display only — does not affect face
+       detection or the underlying pixels): bright + vivid + a light blur that
+       smooths skin texture and hides camera noise for a clean, glowy look. */
+    filter: brightness(1.3) saturate(1.15) contrast(1.02) blur(0.8px);
 }
 video ~ canvas{
     display:none;

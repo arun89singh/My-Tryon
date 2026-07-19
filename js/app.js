@@ -1284,8 +1284,8 @@ let upper = lower.map((p, i) => {
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
     const len = Math.hypot(dx, dy) || 1;
-    const wingExt = eyeWidth * 0.20;
-    const wingLift = eyeWidth * 0.0;
+    const wingExt = eyeWidth * 0.25;
+    const wingLift = eyeWidth * 0.06;
     const wingX = p2.x + (dx / len) * wingExt;
     const wingY = p2.y + (dy / len) * wingExt - wingLift;
     lower[lastIdx] = { x: wingX, y: wingY };

@@ -292,6 +292,13 @@ const CHEEK_RIGHT_CENTER = [352, 280, 266, 425, 411, 376];
 const LEFT_EYE_UPPER  = [362, 398, 384, 385, 386, 387, 388, 466, 263];
 const RIGHT_EYE_UPPER = [33, 246, 161, 160, 159, 158, 157, 173, 133];
 
+// ─── Upper-eyelid CREASE landmarks (MediaPipe) ───────────────
+// The ring of mesh points that sit on the upper eyelid ABOVE the lash line
+// (toward the crease/fold). Used as the UPPER boundary of the eyeshadow so the
+// mask is the real region between the lash line and the crease.
+const RIGHT_EYE_CREASE = [247, 30, 29, 27, 28, 56, 190];   // outer → inner
+const LEFT_EYE_CREASE  = [467, 260, 259, 257, 258, 286, 414]; // outer → inner (mirror)
+
 // ─── Exported for dead-zone measurement ──────────────────────
 const FACE_LANDMARK_INDICES = {
     lips:     [...new Set([...LIP_OUTER, ...LIP_INNER])],
@@ -596,48 +603,40 @@ function compositeLipGloss(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
     ctx.fill('evenodd');
     ctx.restore();
 
+    const s = Math.max(shine, 0.4);
+
+    // ── Wet-gloss shine ──
+    // Soft, STABLE highlights centred on each lip (positions come from the lip
+    // bounding boxes, which move smoothly with the lips — so the shine no longer
+    // jumps between the lips the way the contour-offset bands did). Lower lip =
+    // the main reflection, upper lip = a subtle one. Kept softer/less bright.
+    const { upBounds, loBounds } = getLipRegions(landmarks, w, h);
+    const upW = upBounds.maxX - upBounds.minX, upH = upBounds.maxY - upBounds.minY;
+    const loW = loBounds.maxX - loBounds.minX, loH = loBounds.maxY - loBounds.minY;
+
+    // Rendered on a scratch canvas, then softened by downscale→upscale (a
+    // canvas-resize blur — NOT ctx.filter, which breaks on iOS Safari), then
+    // screened onto the lips. Soft, consistent gloss on every device.
+    const sc = getScratch(w, h);
+    const sctx = sc.getContext('2d');
+    sctx.clearRect(0, 0, w, h);
+    sctx.filter = 'none';
+    sctx.globalCompositeOperation = 'source-over';
+    sctx.globalAlpha = 1;
+    // main shine — lower lip (elongated streak, centred)
+    drawOilHighlight(sctx, loBounds.minX + loW * 0.5, loBounds.minY + loH * 0.52,
+                     loW * 0.32, loH * 0.26, s);
+    // subtle shine — upper lip
+    drawOilHighlight(sctx, upBounds.minX + upW * 0.5, upBounds.minY + upH * 0.55,
+                     upW * 0.26, upH * 0.24, s * 0.5);
+
+    softBlurCanvas(sc, w, h, Math.max(upW * 0.03, 4));         // soften (mobile-safe)
+
     ctx.save();
-    clipToLipMask(ctx, landmarks, w, h);
-
-    const s = Math.max(shine, 0.5);
-
-    // ── SPECULAR: Curved highlight following lip contour ──
-    // A specular reflection on a curved wet surface appears as a thin band
-    // that follows the surface curvature. For lips, this means:
-    //  - Upper lip: thin curved band just below its upper edge
-    //  - Lower lip: thin curved band just below its top edge (mouth seam area)
-    //
-    // By tracing the ACTUAL upper contour of each lip and offsetting, we get
-    // a shape that naturally follows the lip curve — not a flat line/ellipse.
-
-    const upOuter = getPts(landmarks, w, h, UPPER_OUTER);
-    const upInner = getPts(landmarks, w, h, UPPER_INNER);
-
-    // Lower lip outer & inner
-    const loOuter = getPts(landmarks, w, h, [291, 375, 321, 405, 314, 17, 84, 181, 91, 146, 61]);
-    const loInner = getPts(landmarks, w, h, [308, 324, 318, 402, 317, 14, 87, 178, 88, 95, 78]);
-
-    // Apply heavy blur so the highlight softens into the lip rather than
-    // looking like a painted line. Blur amount scales with lip size.
-    const lipW = upOuter[upOuter.length - 1].x - upOuter[0].x;
-    const blurAmt = Math.max(lipW * 0.025, 4);
-    ctx.filter = `blur(${blurAmt.toFixed(1)}px)`;
-
-    // Screen blend = additive light (physically correct for reflection)
-    ctx.globalCompositeOperation = 'screen';
+    clipToLipMask(ctx, landmarks, w, h);                       // keep it on the lips
+    ctx.globalCompositeOperation = 'screen';                   // additive wet shine
     ctx.globalAlpha = 1;
-
-    // ── UPPER LIP HIGHLIGHT ──
-    // Band between upper outer edge (lip top) and 30% down toward inner edge
-    // Horizontal fade at ends so it's brightest in center, dim at corners.
-    drawSpecularBand(ctx, upOuter, upInner, 0.35, s * 0.65);
-
-    // ── LOWER LIP HIGHLIGHT ──
-    // Band between inner edge (mouth seam) and 35% down toward outer edge
-    // Lower lip catches more light — make slightly brighter (wet gloss shine)
-    drawSpecularBand(ctx, loInner, loOuter, 0.38, s * 0.85);
-
-    ctx.filter = 'none';
+    ctx.drawImage(sc, 0, 0);
     ctx.restore();
 }
 
@@ -807,6 +806,26 @@ function getScratch(w, h) {
         _scratchCanvas.height = h;
     }
     return _scratchCanvas;
+}
+
+// Blur a canvas in place by downscaling then upscaling (bilinear averaging).
+// A mobile-safe alternative to ctx.filter='blur()' (which breaks on iOS Safari).
+// `factor` ≈ the blur radius in source pixels.
+let _blurTmp = null;
+function softBlurCanvas(src, w, h, factor) {
+    const f  = Math.max(2, Math.min(factor, 20));
+    const tw = Math.max(1, Math.round(w / f));
+    const th = Math.max(1, Math.round(h / f));
+    if (!_blurTmp) _blurTmp = document.createElement('canvas');
+    if (_blurTmp.width !== tw || _blurTmp.height !== th) { _blurTmp.width = tw; _blurTmp.height = th; }
+    const tctx = _blurTmp.getContext('2d');
+    tctx.clearRect(0, 0, tw, th);
+    tctx.imageSmoothingEnabled = true;
+    tctx.drawImage(src, 0, 0, tw, th);        // downscale (averages → blur)
+    const sctx = src.getContext('2d');
+    sctx.clearRect(0, 0, w, h);
+    sctx.imageSmoothingEnabled = true;
+    sctx.drawImage(_blurTmp, 0, 0, w, h);     // upscale back → soft
 }
 
 // Draw `content` (an already-rendered canvas) onto ctx, keeping ONLY the part
@@ -1137,17 +1156,14 @@ function renderEyelidMask(ctx, landmarks, w, h, hexColor, blurPx) {
     const c = hexToRgb(hexColor);
     ctx.clearRect(0, 0, w, h);
 
-    // Soft, blended edge — blur scales with eye size. A touch less blur than
-    // before so the improved shape stays defined.
     const ref = getPts(landmarks, w, h, RIGHT_EYE_UPPER);
-    const ew  = Math.abs(ref[ref.length - 1].x - ref[0].x) || 40;
-    ctx.filter = `blur(${(blurPx + Math.max(ew * 0.05, 3)).toFixed(1)}px)`;
+    const ew = Math.abs(ref[ref.length - 1].x - ref[0].x) || 40;
 
-    // Pro shape: lid wash (lash→crease) that rises toward the outer corner,
-    // plus an outer-V deepening for dimension. Brow indices let the height
-    // adapt to each eye's real lid size.
-    drawEyelidShadow(ctx, landmarks, w, h, RIGHT_EYE_UPPER, RIGHT_EYEBROW, c, true);  // outer at start (33)
-    drawEyelidShadow(ctx, landmarks, w, h, LEFT_EYE_UPPER,  LEFT_EYEBROW,  c, false); // outer at end (263)
+    const featherBlur = Math.max(ew * 0.015, 1.5);
+    ctx.filter = `blur(${featherBlur.toFixed(1)}px)`;
+
+    drawEyelidShadow(ctx, landmarks, w, h, RIGHT_EYE_UPPER, RIGHT_EYE_CREASE, RIGHT_EYEBROW, c, true);
+    drawEyelidShadow(ctx, landmarks, w, h, LEFT_EYE_UPPER,  LEFT_EYE_CREASE,  LEFT_EYEBROW,  c, false);
 
     ctx.filter = 'none';
 }
@@ -1162,117 +1178,167 @@ function renderEyelidMask(ctx, landmarks, w, h, hexColor, blurPx) {
  * Coordinate note: uses getPts() (no X-flip). Camera flips upstream,
  * photo doesn't, so geometry is correct in both modes.
  */
-function drawEyelidShadow(ctx, lm, w, h, lashIdx, browIdx, c, outerAtStart) {
-    const lash = getPts(lm, w, h, lashIdx);
-    const brow = getPts(lm, w, h, browIdx);
-    const n = lash.length;
-    const ew = Math.abs(lash[n - 1].x - lash[0].x) || 40;
+function drawEyelidShadow(ctx, lm, w, h, lashIdx, creaseIdx, browIdx, c, outerAtStart) {
+    const lashRaw = getPts(lm, w, h, lashIdx);
+    const creaseRaw = getPts(lm, w, h, creaseIdx);
+    if (!lashRaw.length || !creaseRaw.length) return;
 
-    // Nearest brow Y for a given X — lets the band size itself to each eye's lid.
-    const browYAt = (x) => {
-        let best = brow[0], bd = Math.abs(brow[0].x - x);
-        for (let j = 1; j < brow.length; j++) {
-            const d = Math.abs(brow[j].x - x);
-            if (d < bd) { bd = d; best = brow[j]; }
+    // ── Order lash and crease INNER → OUTER ──
+    const lash = outerAtStart ? [...lashRaw].reverse() : [...lashRaw];
+    const crease = [...creaseRaw].reverse();
+
+    // ── Resample both to 30 points ──
+    const K = 30;
+    const resample = (pts, n) => {
+        if (pts.length < 2) return Array(n).fill(pts[0] || {x:0, y:0});
+        const result = [];
+        const total = pts.length - 1;
+        for (let i = 0; i < n; i++) {
+            const t = i / (n - 1);
+            const idx = Math.min(Math.floor(t * total), total - 1);
+            const frac = (t * total) - idx;
+            const p0 = pts[idx];
+            const p1 = pts[idx + 1];
+            result.push({ x: p0.x + (p1.x - p0.x) * frac, y: p0.y + (p1.y - p0.y) * frac });
         }
-        return best.y;
+        return result;
     };
+    let lower = resample(lash, K + 1);
+    let creaseSampled = resample(crease, K + 1);
 
-    // ── Shape FOLLOWS the upper lash line ──
-    // The whole shape is anchored to the lash line, so it sits on the lid
-    // whether the eye is OPEN or CLOSED: on a closed eye the lash line drops and
-    // the shadow drops with it to cover the closed lid.
-    const lsorted = [...lash].sort((p, q) => p.x - q.x);
-    const lashYAt = (x) => {
-        if (x <= lsorted[0].x) return lsorted[0].y;
-        const last = lsorted[lsorted.length - 1];
-        if (x >= last.x) return last.y;
-        for (let i = 1; i < lsorted.length; i++) {
-            if (x <= lsorted[i].x) {
-                const t = (x - lsorted[i - 1].x) / ((lsorted[i].x - lsorted[i - 1].x) || 1);
-                return lsorted[i - 1].y + t * (lsorted[i].y - lsorted[i - 1].y);
+    // ── Smooth crease (moving average) ──
+    const smooth = (pts, window) => {
+        const half = Math.floor(window / 2);
+        return pts.map((p, i) => {
+            let sx = 0, sy = 0, count = 0;
+            for (let j = -half; j <= half; j++) {
+                const idx = Math.min(Math.max(i + j, 0), pts.length - 1);
+                sx += pts[idx].x;
+                sy += pts[idx].y;
+                count++;
             }
-        }
-        return last.y;
+            return { x: sx / count, y: sy / count };
+        });
+    };
+    creaseSampled = smooth(creaseSampled, 5);
+
+    // ── ═══════ HEIGHT CONTROL ═══════ ──
+    // Use a fixed fraction of the eye width as the maximum height.
+    const eyeWidth = Math.abs(lower[lower.length-1].x - lower[0].x) || 1;
+    const heightScale = 0.55;   // 50% of eye width – adjust this (0.4 to 0.6)
+    const maxHeight = eyeWidth * heightScale;
+    // ────────────────────────────────── ──
+
+    // ── Build rounded upper edge ──
+    const profile = (t) => {
+        const center = 0.60;
+        const width = 0.8;
+        const u = (t - center) / width;
+        return Math.max(0, Math.exp(-4 * u * u));
     };
 
-    // Corners (canthi) + a small extension past each so the shape reaches both
-    // corners, with a touch MORE past the OUTER corner for the natural lift.
-    const A0 = lash[0], B0 = lash[n - 1];
-    const midX = (A0.x + B0.x) / 2;
-    const dx = B0.x - A0.x, dy = B0.y - A0.y;
-    const extOuter = 0.38, extInner = 0.05;   // extend the OUTER corner further out (wing toward ear)
-    const eA = outerAtStart ? extOuter : extInner;   // A is the outer corner when outerAtStart
-    const eB = outerAtStart ? extInner : extOuter;
-    const A = { x: A0.x - dx * eA, y: A0.y - dy * eA };
-    const B = { x: B0.x + dx * eB, y: B0.y + dy * eB };
+    // let upper = lower.map((p, i) => {
+    //     const t = i / (lower.length - 1);
+    //     const heightMultiplier = profile(t);
+    //     let h = maxHeight * heightMultiplier;
+    //     // Clamp to crease: never go above creaseY - 2px (so it sits just below)
+    //     const creaseY = creaseSampled[i] ? creaseSampled[i].y : p.y - 10;
+    //     let upperY = p.y - h;
+    //     if (upperY < creaseY - 2) upperY = creaseY - 2;
+    //     return { x: p.x, y: upperY };
+    // });
 
-    // LOWER edge = just above the lash line. UPPER edge = a smooth rounded arch
-    // up to ~the crease (a fraction of the lash→brow gap), tapering at both
-    // corners with a slight OUTER lift. Both taper together at the corners so
-    // the shape reads as one rounded almond covering the whole upper lid.
-    const STEPS = 32;
-    const lower = [], upper = [];
-    for (let k = 0; k <= STEPS; k++) {
-        const u    = k / STEPS;                      // 0 = corner A → 1 = corner B
-        const cx   = A.x + (B.x - A.x) * u;
-        const ly   = lashYAt(cx);
-        const t   = outerAtStart ? (1 - u) : u;     // 0 = inner corner → 1 = outer
-        // CAPSULE profile: stays FULL height across the whole eye and tapers to
-        // points only right at the corners → an elongated almond that reaches
-        // BOTH the inner (nose) and outer (ear) corners, not a central hump.
-        const cap = Math.pow(Math.max(0, 1 - Math.pow(Math.abs(2 * u - 1), 3.5)), 0.5);
-        // Height keyed to EYE WIDTH so it sits on the lid (never the brow bone).
-        const domeH    = ew * 0.56 * cap * (0.7 + 0.30 * t);   // above-crease, a bit taller at the outer
-        // WING: sweep the OUTER corner UP toward the ear/temple (lifts both edges
-        // so the outer end rises into a wing tip instead of drooping to the lash).
-        const wingLift = ew * 0.07 * Math.pow(t, 2.2);
-        lower.push({ x: cx, y: ly - ew * 0.03 * cap - wingLift }); // right on/above the lash line
-        upper.push({ x: cx, y: ly - domeH - wingLift });            // above-crease dome + outer wing
-    }
+     // ── Detect if eye is closed ──
+let totalDist = 0;
+for (let i = 0; i < lower.length; i++) {
+    const creaseY = creaseSampled[i] ? creaseSampled[i].y : lower[i].y - 10;
+    totalDist += creaseY - lower[i].y;
+}
+const avgDist = totalDist / lower.length;
+// If average distance is less than 15% of eye width, we consider eye closed
+const isEyeClosed = avgDist < eyeWidth * 0.15;
 
-    // Trace with SMOOTH lash & crease edges but SHARP inner + outer corners.
-    ctx.beginPath();
-    traceEyeShape(ctx, lower, upper);
+// ── Adaptive height and clamp ──
+// When closed, increase heightScale to fill the lid and remove clamp offset
+const effectiveHeightScale = isEyeClosed ? heightScale * 1.4 : heightScale; // +20% when closed
+const maxHeightx = eyeWidth * effectiveHeightScale;
+const clampOffset = isEyeClosed ? 0 : 2; // 0 = touch crease, 2 = stay below
 
-    // Dark at the lash line (the eye) → lighter toward the crease.
+let upper = lower.map((p, i) => {
+    const t = i / (lower.length - 1);
+    const heightMultiplier = profile(t);
+    let h = maxHeightx * heightMultiplier;
+    const creaseY = creaseSampled[i] ? creaseSampled[i].y : p.y - 10;
+    let upperY = p.y - h;
+    if (upperY < creaseY - clampOffset) upperY = creaseY - clampOffset;
+    return { x: p.x, y: upperY };
+});
+
+    // ── Sharp inner corner ──
+    upper[0] = { x: lower[0].x, y: lower[0].y };
+
+    // ── Outer wing ──
+    const lastIdx = lower.length - 1;
+    const p1 = lower[lastIdx - 1] || lower[0];
+    const p2 = lower[lastIdx];
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const wingExt = eyeWidth * 0.20;
+    const wingLift = eyeWidth * 0.0;
+    const wingX = p2.x + (dx / len) * wingExt;
+    const wingY = p2.y + (dy / len) * wingExt - wingLift;
+    lower[lastIdx] = { x: wingX, y: wingY };
+    upper[lastIdx] = { x: wingX, y: wingY };
+
+    // ── Shape loop ──
+    const loop = lower.concat([...upper].reverse());
+
+    // ── Gradient ──
     const topY = Math.min(...upper.map(p => p.y));
     const botY = Math.max(...lower.map(p => p.y));
-    const g = ctx.createLinearGradient(0, botY, 0, topY);
-    g.addColorStop(0,    `rgba(${c.r},${c.g},${c.b},1.00)`); // darkest — at the lashes
-    g.addColorStop(0.40, `rgba(${c.r},${c.g},${c.b},0.80)`);
-    g.addColorStop(0.75, `rgba(${c.r},${c.g},${c.b},0.42)`);
-    g.addColorStop(1,    `rgba(${c.r},${c.g},${c.b},0.60)`);    // lightest — toward the crease
-    ctx.fillStyle = g;
+    const grad = ctx.createLinearGradient(0, botY, 0, topY);
+    const avg = (c.r + c.g + c.b) / 3;
+    const SAT = 1.10, BRI = 1.03;
+    const cb = {
+        r: Math.min(255, Math.max(0, Math.round((avg + (c.r - avg) * SAT) * BRI))),
+        g: Math.min(255, Math.max(0, Math.round((avg + (c.g - avg) * SAT) * BRI))),
+        b: Math.min(255, Math.max(0, Math.round((avg + (c.b - avg) * SAT) * BRI))),
+    };
+    grad.addColorStop(0,    `rgba(${cb.r},${cb.g},${cb.b},0.95)`);
+    grad.addColorStop(0.35, `rgba(${cb.r},${cb.g},${cb.b},0.82)`);
+    grad.addColorStop(0.70, `rgba(${cb.r},${cb.g},${cb.b},0.45)`);
+    grad.addColorStop(1,    `rgba(${cb.r},${cb.g},${cb.b},0.05)`);
+
+    ctx.beginPath();
+    traceSmoothClosed(ctx, loop);
+    ctx.fillStyle = grad;
     ctx.fill();
 
-    // DEBUG: add ?eyeoutline=1 to the URL to draw the exact shape as a bright
-    // outline (visible regardless of shade / lighting) so the shape can be
-    // verified against the reference. Off by default; safe to leave in.
+    // ── Debug outline ──
     if (typeof location !== 'undefined' && location.search.indexOf('eyeoutline') !== -1) {
         ctx.save();
         ctx.filter = 'none';
         ctx.beginPath();
-        traceEyeShape(ctx, lower, upper);
+        traceSmoothClosed(ctx, loop);
         ctx.strokeStyle = 'rgba(255,0,255,0.95)';
-        ctx.lineWidth = Math.max(ew * 0.02, 2);
+        ctx.lineWidth = 2;
         ctx.stroke();
         ctx.restore();
     }
 
-    // ── Subtle depth toward the OUTER corner (matches the reference's deeper
-    //    outer edge). Painted INSIDE the shape via a plain clip (no filter →
-    //    mobile-safe). Kept subtle for consistent intensity across the lid. ──
-    const outerPt = outerAtStart ? A : B;
-    const dk = { r: Math.round(c.r * 0.55), g: Math.round(c.g * 0.55), b: Math.round(c.b * 0.55) };
+    // ── Outer corner depth ──
+    const outerPt = lower[lastIdx];
+    const midX = (lower[0].x + outerPt.x) / 2;
     const deepCx = outerPt.x + (midX - outerPt.x) * 0.15;
-    const deepCy = outerPt.y - ew * 0.14;
-    const deepR  = ew * 0.42;
+    const deepCy = outerPt.y - (outerPt.y - lower[0].y) * 0.14;
+    const deepR = Math.abs(outerPt.x - lower[0].x) * 0.42;
+    const dk = { r: Math.round(c.r * 0.55), g: Math.round(c.g * 0.55), b: Math.round(c.b * 0.55) };
 
     ctx.save();
     ctx.filter = 'none';
     ctx.beginPath();
-    traceEyeShape(ctx, lower, upper);   // clip to the lid shape
+    traceSmoothClosed(ctx, loop);
     ctx.clip();
     const dg = ctx.createRadialGradient(deepCx, deepCy, 0, deepCx, deepCy, deepR);
     dg.addColorStop(0,   `rgba(${dk.r},${dk.g},${dk.b},0.55)`);
@@ -1310,7 +1376,7 @@ function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
 
     // Pigmentation → coverage. Soft = sheer wash, Intense = bold.
     const PIG_MUL   = { Soft: 0.78, Medium: 1.0, Intense: 1.3 };
-    const fillAlpha = Math.min(opacity * 1.25 * (PIG_MUL[pigment] ?? 1.0), 1.0);
+    const fillAlpha = Math.min(opacity * 1.05 * (PIG_MUL[pigment] ?? 1.0), 0.92);
 
     // Finish → smooth sheen amount + GLITTER amount. Matte = none; Glitter =
     // heavy sparkle (like the reference); Metallic/Shimmer in between.
@@ -1330,9 +1396,9 @@ function compositeEyelids(ctx, maskCanvas, landmarks, w, h, opacity, shine) {
         // don't read as white paint — and keep it small + screen-blended so
         // it sparkles instead of forming a solid blob.
         const sc = hexToRgb(state.shade);
-        const hr = Math.round(0.55 * 255 + 0.45 * sc.r);
-        const hg = Math.round(0.55 * 255 + 0.45 * sc.g);
-        const hb = Math.round(0.55 * 255 + 0.45 * sc.b);
+        const hr = Math.round(0.30 * 255 + 0.70 * sc.r);
+        const hg = Math.round(0.30 * 255 + 0.70 * sc.g);
+        const hb = Math.round(0.30 * 255 + 0.70 * sc.b);
 
         const leftCenter  = centroid(landmarks, w, h, LEFT_EYE_UPPER);
         const rightCenter = centroid(landmarks, w, h, RIGHT_EYE_UPPER);
@@ -2748,7 +2814,7 @@ const PRODUCT_ID_MAP = {
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[HoZ] build JULY-06 loaded — eyeshadow shows on closed lid + mobile accordion');
+    console.log('[HoZ] build JULY-18-I loaded — eyeshadow: smooth resampled almond (broad top, gentle wing)');
 
     // Initialize default state + build form for default product
     initDefaultState('lipstick');
